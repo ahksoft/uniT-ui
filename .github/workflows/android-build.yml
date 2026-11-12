@@ -1,0 +1,121 @@
+name: UniTool Android Build
+
+on:
+  push:
+    branches: [main, "work/**", "feature/**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      build_variant:
+        description: Gradle build variant
+        required: true
+        default: debug
+        type: choice
+        options: [debug, release]
+      strict_native_audit:
+        description: Fail if any native tool is missing for an ABI
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unitool-android-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-36.1 build-tools;36.0.0 ndk;25.2.9519653 cmake;3.22.1"
+      - uses: gradle/actions/wrapper-validation@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Verify packaged terminal assets
+        run: |
+          set -euo pipefail
+          test -s app/src/main/assets/termux-python-runtime.zip
+          test -d app/src/main/assets/bootstrap/bin
+          test -s app/src/main/assets/lib_symlinks.properties
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile("app/src/main/assets/termux-python-runtime.zip") as archive:
+              names = set(archive.namelist())
+              required = [
+                  "site-packages/pip/__init__.py",
+                  "site-packages/usb/__init__.py",
+                  "site-packages/serial/__init__.py",
+                  "site-packages/colorama/__init__.py",
+              ]
+              missing = [name for name in required if not any(n.endswith(name) for n in names)]
+              if missing:
+                  raise SystemExit("Missing Python runtime ZIP entries: " + ", ".join(missing))
+          PY
+      - name: Audit native toolchain
+        env:
+          STRICT_NATIVE_AUDIT: ${{ inputs.strict_native_audit && '1' || '0' }}
+        run: bash scripts/audit-native-libs.sh
+      - name: Build debug
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_variant == 'debug' }}
+        run: chmod +x ./gradlew && ./gradlew --no-daemon clean :app:assembleDebug
+      - name: Build release
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_variant == 'release' }}
+        run: chmod +x ./gradlew && ./gradlew --no-daemon clean :app:assembleRelease
+      - name: Verify ARM64-only debug APK
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_variant == 'debug' }}
+        run: bash scripts/verify-arm64-apk.sh app/build/outputs/apk/debug
+      - name: Diagnose packaged Python assets
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_variant == 'debug' }}
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$APK"
+          echo "APK: $APK"
+          unzip -Z1 "$APK" | grep -Fx 'assets/termux-python-runtime.zip'
+          mkdir -p build
+          unzip -p "$APK" assets/termux-python-runtime.zip > build/python-runtime-from-apk.zip
+          python3 - <<'PY'
+          import zipfile
+          with zipfile.ZipFile("build/python-runtime-from-apk.zip") as archive:
+              for entry in (
+                  "python3.14/os.py",
+                  "python3.14/encodings/__init__.py",
+                  "python3.14/site-packages/pip/_internal/cli/main.py",
+                  "python3.14/zipfile/_path/__init__.py",
+                  "python3.14/site-packages/usb/__init__.py",
+                  "python3.14/site-packages/serial/__init__.py",
+                  "python3.14/site-packages/colorama/__init__.py",
+                  "python3.14/site-packages/Cryptodome/__init__.py",
+              ):
+                  if entry not in archive.namelist():
+                      raise SystemExit("MISSING from packaged Python runtime: " + entry)
+                  print("PRESENT:", entry)
+          PY
+      - name: Upload debug APK
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_variant == 'debug' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unitool-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+      - name: Verify ARM64-only release APK
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_variant == 'release' }}
+        run: bash scripts/verify-arm64-apk.sh app/build/outputs/apk/release
+      - name: Upload release APK
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_variant == 'release' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: unitool-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error

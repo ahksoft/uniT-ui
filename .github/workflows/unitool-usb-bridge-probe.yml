@@ -1,0 +1,37 @@
+name: UniTool USB bridge probe build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/unitool-branding-package-migration
+    paths:
+      - "app/src/main/cpp/unitool_bridge_probe.cpp"
+      - "app/src/main/cpp/unitool_usb_probe.cpp"
+      - "app/src/main/cpp/unitool_libusb_probe.cpp"
+      - "app/src/main/cpp/unitool_libusb_wrap_probe.cpp"
+      - "app/src/main/cpp/unitool_mtk_usb_probe.cpp"
+      - "app/src/main/cpp/usb_bridge_api.h"
+      - "app/src/main/cpp/CMakeLists.txt"
+      - "app/src/main/assets/lib_symlinks.properties"
+      - ".github/workflows/unitool-usb-bridge-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-36.1 build-tools;36.0.0 ndk;25.2.9519653 cmake;3.22.1"
+      - name: Build Android native targets
+        run: |
+          chmod +x ./gradlew
+          ./gradlew --no-daemon :app:externalNativeBuildDebug

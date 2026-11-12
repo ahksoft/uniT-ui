@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">UniTool</string>
+    <string name="notification_terminal_session">Terminal session</string>
+    <string name="notification_terminal_session_des">Keeps the interactive terminal session alive.</string>
+    <string name="notification_running">Running. Tap to open UniTool.</string>
+    <string name="notification_action_stop">Stop</string>
+</resources>

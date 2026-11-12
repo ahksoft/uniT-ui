@@ -1,0 +1,3 @@
+Package: *
+Pin: origin packages-cf.termux.dev
+Pin-Priority: 500

@@ -1,0 +1,22 @@
+# Adbify shell environment
+export PREFIX="${PREFIX:-$HOME/../usr}"
+export PATH="$PREFIX/bin:/system/bin:/system/xbin"
+export PYTHONHOME="$PREFIX"
+export PYTHONPATH="$PREFIX/lib/python3.14/site-packages:$PREFIX/lib/python/site-packages"
+export TMPDIR="${TMPDIR:-$PREFIX/tmp}"
+export LD_LIBRARY_PATH="$PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export GIT_EXEC_PATH="$PREFIX/libexec/git-core"
+export GIT_TEMPLATE_DIR="$PREFIX/share/git-core/templates"
+export OPENSSL_MODULES="$PREFIX/lib/ossl-modules"
+export GIT_CONFIG_NOSYSTEM=1
+if [ -f "$PREFIX/etc/tls/cert.pem" ]; then
+  export SSL_CERT_FILE="$PREFIX/etc/tls/cert.pem"
+  export CURL_CA_BUNDLE="$SSL_CERT_FILE"
+  export GIT_SSL_CAINFO="$SSL_CERT_FILE"
+fi
+if [ -f "$PREFIX/etc/tls/openssl.cnf" ]; then
+  export OPENSSL_CONF="$PREFIX/etc/tls/openssl.cnf"
+fi
+export TERM="${TERM:-screen}"
+export LANG="${LANG:-C.UTF-8}"
+export HISTFILE="$HOME/.sh_history"

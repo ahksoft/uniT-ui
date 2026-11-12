@@ -1,0 +1,97 @@
+{
+  "upstream": "https://github.com/CrackerCat/Adbify",
+  "upstream_commit": "85381ff30f3f358911bafca136f83219f3bf2e14",
+  "apk": {
+    "package": "com.rv882.adbify",
+    "version_name": "5.1",
+    "version_code": 100108,
+    "min_sdk": 24,
+    "abis": [
+      "arm64-v8a",
+      "armeabi-v7a",
+      "x86",
+      "x86_64"
+    ],
+    "languages": [
+      "ar",
+      "de",
+      "en",
+      "es",
+      "et",
+      "fi",
+      "fr",
+      "hi",
+      "hu",
+      "in",
+      "it",
+      "ja",
+      "ko",
+      "ms",
+      "nl",
+      "pl",
+      "pt",
+      "ru",
+      "sv",
+      "th",
+      "tr",
+      "uk",
+      "vi",
+      "zh"
+    ],
+    "dpi_buckets": [
+      120,
+      160,
+      213,
+      240,
+      320,
+      480,
+      640
+    ]
+  },
+  "native_components_in_each_abi_split": [
+    "libadb.so",
+    "libbash.so",
+    "libclear.so",
+    "libcoreutils.so",
+    "libdatastore_shared_counter.so",
+    "libfastboot.so",
+    "libfwmark.so",
+    "libheimdall.so",
+    "libmake_f2fs.so",
+    "libmke2fs.so",
+    "libpty.so",
+    "libqdl.so",
+    "libtest.so",
+    "libusb.so",
+    "libusb_bridge.so"
+  ],
+  "source_tree_jniLibs_inventory": [
+    "libadb.so"
+  ],
+  "missing_from_source_inventory": [
+    "libbash.so",
+    "libclear.so",
+    "libcoreutils.so",
+    "libdatastore_shared_counter.so",
+    "libfastboot.so",
+    "libfwmark.so",
+    "libheimdall.so",
+    "libmake_f2fs.so",
+    "libmke2fs.so",
+    "libpty.so",
+    "libqdl.so",
+    "libtest.so",
+    "libusb.so",
+    "libusb_bridge.so"
+  ],
+  "audit_notes": [
+    "Archive-level APKM inspection and DEX string-table inspection only; a full JADX decompile was not performed because JADX and apktool are not installed in the runtime.",
+    "APK-derived native binaries were not copied into the public repository. Their license and source provenance need to be verified before redistribution.",
+    "The application source was not regenerated from decompiled proprietary resources or classes.",
+    "This is a component-gap audit, not a complete native-source implementation."
+  ],
+  "reconstruction_target": {
+    "app_name": "UniTool",
+    "application_id": "ahk.unitool.gsm"
+  }
+}

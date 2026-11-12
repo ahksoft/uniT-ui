@@ -1,0 +1,180 @@
+name: ARM64 Termux CLI runtime build
+
+on:
+  push:
+    branches:
+      - main
+      - 'work/**'
+      - 'feature/**'
+    paths:
+      - '.github/workflows/termux-cli-runtime.yml'
+      - 'app/**'
+      - 'terminalview/**'
+      - 'scripts/**'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'build-termux.sh'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: termux-cli-runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-arm64:
+    name: Build UniTool ARM64 APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ANDROID_API: '24'
+      ANDROID_NDK_VERSION: '25.2.9519653'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Android SDK and NDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: >-
+            platform-tools
+            platforms;android-36.1
+            build-tools;36.0.0
+            ndk;25.2.9519653
+            cmake;3.22.1
+
+      - name: Configure and verify Android ARM64 toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ANDROID_HOME=${ANDROID_HOME:-}"
+          test -n "${ANDROID_HOME:-}"
+          export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+          export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
+          TOOLCHAIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC="$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang"
+          test -x "$CC"
+          test -x "$TOOLCHAIN/llvm-readelf"
+          "$CC" --version
+          printf 'ANDROID_NDK_ROOT=%s\n' "$ANDROID_NDK_ROOT" >> "$GITHUB_ENV"
+          printf 'ANDROID_NDK_HOME=%s\n' "$ANDROID_NDK_HOME" >> "$GITHUB_ENV"
+          printf 'ANDROID_API=%s\n' "$ANDROID_API" >> "$GITHUB_ENV"
+          printf 'ANDROID_ARM64_CC=%s\n' "$CC" >> "$GITHUB_ENV"
+
+      - name: Install host build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y patchelf binutils dpkg-dev
+
+      - name: Download, verify, and stage official Termux packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/prepare-termux-cli-runtime.sh
+          for command in git curl wget openssl less python python3 pip pip3 apt apt-get apt-cache apt-config dpkg dpkg-deb dpkg-query pkg; do
+            test -s "app/src/main/assets/bootstrap/bin/$command"
+          done
+          test -s app/src/main/assets/termux-python-runtime.zip
+          test -s app/src/main/assets/bootstrap/lib/libpython3.14.so
+          test -s app/src/main/assets/bootstrap/lib/libcurl.so
+          test -s app/src/main/assets/bootstrap/lib/libssl.so.3
+          test -x app/src/main/assets/bootstrap/lib/apt/methods/http
+          test -x app/src/main/assets/bootstrap/lib/apt/methods/https
+
+      - name: Verify Termux Python package payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHON_BIN=app/src/main/assets/bootstrap/bin/python
+          PYTHON_ARCHIVE=app/src/main/assets/termux-python-runtime.zip
+          test -s "$PYTHON_BIN"
+          test -s "$PYTHON_ARCHIVE"
+          python3 - "$PYTHON_BIN" "$PYTHON_ARCHIVE" <<'PY'
+          import pathlib
+          import struct
+          import sys
+          import zipfile
+
+          binary = pathlib.Path(sys.argv[1]).read_bytes()
+          if len(binary) < 20 or binary[:4] != b"\x7fELF":
+              raise SystemExit("Termux python is not an ELF executable")
+          if binary[4] != 2 or binary[5] != 1:
+              raise SystemExit("Termux python must be ELF64 little-endian")
+          machine = struct.unpack_from("<H", binary, 18)[0]
+          if machine != 183:
+              raise SystemExit(f"Expected ARM64 python (EM_AARCH64=183), got {machine}")
+          with zipfile.ZipFile(sys.argv[2]) as archive:
+              names = set(archive.namelist())
+              if not any(name.endswith("/os.py") for name in names):
+                  raise SystemExit("Termux Python standard library archive is missing os.py")
+              if not any(name.endswith("/encodings/__init__.py") for name in names):
+                  raise SystemExit("Termux Python standard library archive is missing encodings")
+              required = (
+                  "site-packages/pip/__init__.py",
+                  "site-packages/usb/__init__.py",
+                  "site-packages/serial/__init__.py",
+                  "site-packages/colorama/__init__.py",
+                  "site-packages/Cryptodome/__init__.py",
+              )
+              missing = [item for item in required if not any(name.endswith(item) for name in names)]
+              if missing:
+                  raise SystemExit("Missing bundled Python packages: " + ", ".join(missing))
+          print("Verified ARM64 Python, pip, PyUSB, PySerial, Colorama and PyCryptodome runtime.")
+          PY
+
+      - name: Audit ARM64 native runtime
+        env:
+          STRICT_NATIVE_AUDIT: '1'
+        run: bash scripts/audit-native-libs.sh
+
+      - name: Validate Gradle wrapper
+        run: |
+          set -euo pipefail
+          test -s gradlew
+          chmod +x ./gradlew
+          ./gradlew --version
+
+      - name: Build ARM64 debug APK
+        run: ./gradlew --no-daemon --stacktrace clean :app:assembleDebug
+
+      - name: Verify APK ABI and contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="$(find app/build/outputs/apk/debug -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$APK"
+          test -s "$APK"
+          mkdir -p build/apk-audit
+          unzip -l "$APK" | tee build/apk-audit/apk-contents.txt
+          if unzip -Z1 "$APK" | grep -E '^lib/(armeabi-v7a|x86|x86_64)/'; then
+            echo "Unexpected non-ARM64 ABI found in APK" >&2
+            exit 1
+          fi
+          unzip -Z1 "$APK" | grep -q '^lib/arm64-v8a/'
+          unzip -Z1 "$APK" | grep -q 'assets/termux-python-runtime.zip'
+          sha256sum "$APK" | tee build/apk-audit/SHA256SUMS
+
+      - name: Upload ARM64 debug APK and audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: unitool-arm64-termux-cli-debug
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            build/apk-audit/*
+          if-no-files-found: error
+          retention-days: 3

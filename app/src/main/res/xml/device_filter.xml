@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Spreadtrum / Unisoc -->
+    <usb-device vendor-id="6020" /> <!-- 0x1782 -->
+
+    <!-- MediaTek -->
+    <usb-device vendor-id="3725" /> <!-- 0x0E8D -->
+    <usb-device vendor-id="4100" /> <!-- 0x1004 -->
+    <usb-device vendor-id="8921" /> <!-- 0x22D9 -->
+    <usb-device vendor-id="4046" /> <!-- 0x0FCE -->
+
+    <!-- Serial adapters (common) -->
+    <usb-device vendor-id="1027" /> <!-- 0x0403 FTDI -->
+    <usb-device vendor-id="4292" /> <!-- 0x10C4 CP210x -->
+    <usb-device vendor-id="1659" /> <!-- 0x067B PL2303 -->
+    <usb-device vendor-id="6790" /> <!-- 0x1A86 CH340/CH341 -->
+</resources>
