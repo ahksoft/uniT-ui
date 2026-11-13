@@ -67,6 +67,20 @@ jobs:
         env:
           STRICT_NATIVE_AUDIT: ${{ inputs.strict_native_audit && '1' || '0' }}
         run: bash scripts/audit-native-libs.sh
+      - name: Generate CI debug keystore
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_variant == 'debug' }}
+        run: |
+          set -euo pipefail
+          if [ ! -s debug.keystore ]; then
+            keytool -genkeypair -v \\
+              -keystore debug.keystore \\
+              -storepass android \\
+              -alias androiddebugkey \\
+              -keypass android \\
+              -keyalg RSA -keysize 2048 -validity 10000 \\
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          test -s debug.keystore
       - name: Build debug
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_variant == 'debug' }}
         run: chmod +x ./gradlew && ./gradlew --no-daemon clean :app:assembleDebug
