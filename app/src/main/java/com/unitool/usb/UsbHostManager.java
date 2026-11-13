@@ -168,9 +168,18 @@ public class UsbHostManager {
     public void requestPermission(UsbDevice device, UsbPermissionCallback callback) {
         if (usbManager == null) return;
         this.permissionCallback = callback;
-        Intent intent = new Intent(ACTION_USB_PERMISSION);
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
-        permissionIntent = PendingIntent.getBroadcast(context, 0, intent, flags);
+        Intent intent = new Intent(ACTION_USB_PERMISSION).setPackage(context.getPackageName());
+        // UsbManager adds EXTRA_DEVICE and EXTRA_PERMISSION_GRANTED to this
+        // PendingIntent, so it must be mutable on Android 12+.
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            flags |= PendingIntent.FLAG_MUTABLE;
+        } else {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        permissionIntent = PendingIntent.getBroadcast(
+                context, device.getDeviceId(), intent, flags
+        );
         try {
             usbManager.requestPermission(device, permissionIntent);
         } catch (Exception e) {

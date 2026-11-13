@@ -46,7 +46,8 @@ jobs:
         run: |
           set -euo pipefail
           test -s app/src/main/assets/termux-python-runtime.zip
-          test -d app/src/main/assets/bootstrap/bin
+          test -d app/src/main/assets/bootstrap/lib/python3.14
+          test -d app/src/main/assets/bootstrap/lib/python3.14/site-packages
           test -s app/src/main/assets/lib_symlinks.properties
           python3 - <<'PY'
           import zipfile

@@ -252,7 +252,7 @@ fun ConnectScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (selectedDevice != null) "Device: ${selectedDevice!!.vidPidHex} (${selectedDevice!!.displayName ?: "Connected"})" else "No USB Device Connected",
+                        text = if (selectedDevice != null) "${selectedDevice!!.connectionModeLabel} · ${selectedDevice!!.displayName ?: "Connected"}" else "No USB Device Connected",
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,

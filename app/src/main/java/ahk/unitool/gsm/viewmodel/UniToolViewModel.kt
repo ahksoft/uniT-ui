@@ -1,6 +1,12 @@
 package ahk.unitool.gsm.viewmodel
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
@@ -178,9 +184,43 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private val usbEventsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    appendLog("USB device attached; detecting mode…", LogLineType.SYSTEM)
+                    rescanUsb()
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    appendLog("USB device detached.", LogLineType.SYSTEM)
+                    rescanUsb()
+                }
+                "com.unitool.USB_PERMISSION" -> rescanUsb()
+            }
+        }
+    }
+
+    private var usbEventsReceiverRegistered = false
+
     init {
         appendLog("UniTool Native Material You Initialized.", LogLineType.SYSTEM)
-        appendLog("Separate protocol configurations loaded: MTK, SPD, QC, Fastboot, ADB.", LogLineType.SYSTEM)
+        appendLog("USB event-driven discovery enabled; CLI tools use the shared USB FD broker.", LogLineType.SYSTEM)
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction("com.unitool.USB_PERMISSION")
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                application.registerReceiver(usbEventsReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                application.registerReceiver(usbEventsReceiver, filter)
+            }
+            usbEventsReceiverRegistered = true
+        } catch (e: Exception) {
+            appendLog("USB event listener registration failed: ${e.message}", LogLineType.ERROR)
+        }
         rescanUsb()
     }
 
@@ -199,20 +239,39 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             usbHostManager.rescan()
             val list = usbHostManager.listDevices() ?: emptyList()
+            val previous = _connectedDevices.value
             _connectedDevices.value = list
-            if (list.isNotEmpty()) {
-                val dev = list[0]
-                _selectedDevice.value = dev
-                appendLog("USB Device: ${dev.vidPidHex} ${dev.displayName ?: "Generic"} attached.", LogLineType.SYSTEM)
-                if (dev.isMediaTek) {
-                    _protocolMode.value = DeviceProtocolMode.MTK
-                } else if (dev.isSpreadtrum) {
-                    _protocolMode.value = DeviceProtocolMode.SPD
+            val selected = list.firstOrNull()
+            _selectedDevice.value = selected
+
+            if (list != previous) {
+                if (selected != null) {
+                    appendLog("USB detected: ${selected.connectionModeLabel} · ${selected.displayName}.", LogLineType.SYSTEM)
+                } else if (previous.isNotEmpty()) {
+                    appendLog("No USB device connected.", LogLineType.SYSTEM)
                 }
-            } else {
-                _selectedDevice.value = null
+            }
+
+            when (selected?.connectionModeLabel?.substringBefore(" ·")) {
+                "MTK" -> _protocolMode.value = DeviceProtocolMode.MTK
+                "UNISOC" -> _protocolMode.value = DeviceProtocolMode.SPD
+                "QUALCOMM" -> _protocolMode.value = DeviceProtocolMode.QUALCOMM
+                "FASTBOOT" -> _protocolMode.value = DeviceProtocolMode.FASTBOOT
+                "ADB" -> _protocolMode.value = DeviceProtocolMode.ADB
             }
         }
+    }
+
+    override fun onCleared() {
+        if (usbEventsReceiverRegistered) {
+            try {
+                getApplication<Application>().unregisterReceiver(usbEventsReceiver)
+            } catch (_: IllegalArgumentException) {
+            }
+            usbEventsReceiverRegistered = false
+        }
+        terminalSession.close()
+        super.onCleared()
     }
 
     // Setters for MTK
@@ -815,9 +874,4 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         appendLog("[SUCCESS] Device Info Parsed -> Manufacturer: $manufacturer | Model: $model | Android: $androidVersion", LogLineType.SYSTEM)
     }
 
-    override fun onCleared() {
-
-        super.onCleared()
-        terminalSession.close()
-    }
 }
