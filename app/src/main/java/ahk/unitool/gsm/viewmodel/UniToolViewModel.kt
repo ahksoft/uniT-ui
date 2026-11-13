@@ -270,6 +270,7 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
             }
             usbEventsReceiverRegistered = false
         }
+        terminalSession.close()
         super.onCleared()
     }
 
@@ -873,9 +874,4 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         appendLog("[SUCCESS] Device Info Parsed -> Manufacturer: $manufacturer | Model: $model | Android: $androidVersion", LogLineType.SYSTEM)
     }
 
-    override fun onCleared() {
-
-        super.onCleared()
-        terminalSession.close()
-    }
 }
