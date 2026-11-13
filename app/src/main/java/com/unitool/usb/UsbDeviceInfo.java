@@ -80,6 +80,44 @@ public class UsbDeviceInfo {
     }
 
     /**
+     * Human-readable USB connection mode for the UniTool status bar.
+     * Android ADB/fastboot use interface class 0xff, subclass 0x42,
+     * protocol 0x01 (ADB) and 0x03 (fastboot).
+     */
+    public String getConnectionModeLabel() {
+        if (isMediaTek()) {
+            String mode = getMtkMode();
+            if ("brom".equals(mode)) return "MTK · BROM";
+            if ("preloader".equals(mode)) return "MTK · PRELOADER";
+            return "MTK";
+        }
+        if (isSpreadtrum()) {
+            switch (pid) {
+                case 0x4d00: return "UNISOC · BROM";
+                case 0x4d01: return "UNISOC · FDL1";
+                case 0x4d02: return "UNISOC · FDL2";
+                case 0x4d11: return "UNISOC · DIAG";
+                default: return "UNISOC";
+            }
+        }
+        if (vid == 0x05C6 && pid == 0x9008) return "QUALCOMM · EDL";
+
+        boolean adb = false;
+        boolean fastboot = false;
+        for (int i = 0; i < device.getInterfaceCount(); i++) {
+            UsbInterface intf = device.getInterface(i);
+            if (intf.getInterfaceClass() == 0xFF && intf.getInterfaceSubclass() == 0x42) {
+                if (intf.getInterfaceProtocol() == 0x01) adb = true;
+                if (intf.getInterfaceProtocol() == 0x03) fastboot = true;
+            }
+        }
+        if (adb && fastboot) return "ADB / FASTBOOT";
+        if (adb) return "ADB";
+        if (fastboot) return "FASTBOOT";
+        return "USB DEVICE";
+    }
+
+    /**
      * Locates the endpoints used for the protocol.
      *
      * <p>Prefers an interface that provides both a bulk IN and a bulk OUT endpoint, so
