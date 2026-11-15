@@ -830,11 +830,16 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
                         if (columns.size < 2) null else columns[1].lowercase()
                     }
                     .toList()
+                val outputText = captured.toString()
                 _adbConnectionStatus.value = when {
                     "device" in transports -> "Authorized ADB device connected"
                     "unauthorized" in transports -> "Device unauthorized — approve the USB debugging prompt"
                     "offline" in transports -> "ADB device offline"
-                    transports.any { it.contains("no permissions") } -> "USB permission unavailable"
+                    outputText.contains("no permissions", ignoreCase = true) ->
+                        "USB permission unavailable"
+                    outputText.contains("adb: error", ignoreCase = true) ||
+                        outputText.contains("command not found", ignoreCase = true) ->
+                        "ADB command failed — check the packaged platform-tools"
                     else -> "No ADB device detected"
                 }
                 _isExecuting.value = false
