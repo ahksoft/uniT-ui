@@ -803,7 +803,7 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
                     output.contains("error", ignoreCase = true) && deviceLine == null ->
                         "Fastboot command failed — check the packaged platform-tools"
                     deviceLine != null ->
-                        "Fastboot device connected · ${deviceLine.substringBefore(" ")}"
+                        "Fastboot device connected · ${deviceLine.substringBefore(' ')}"
                     else -> "No Fastboot device detected"
                 }
                 _isExecuting.value = false
