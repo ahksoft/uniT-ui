@@ -93,6 +93,7 @@ fun ConnectScreen(
     val connectedDevices by viewModel.connectedDevices.collectAsState()
     val selectedDevice by viewModel.selectedDevice.collectAsState()
     val isExecuting by viewModel.isExecuting.collectAsState()
+    val adbConnectionStatus by viewModel.adbConnectionStatus.collectAsState()
 
     // MTK state
     val mtkLoader by viewModel.mtkLoader.collectAsState()
@@ -791,6 +792,36 @@ fun ConnectScreen(
                     Icon(Icons.Default.Cable, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
                     Text("CONNECT  ·  CHECK ADB DEVICE", fontWeight = FontWeight.Bold)
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("adb_transport_status"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier.size(8.dp).clip(CircleShape).background(
+                                when {
+                                    adbConnectionStatus.startsWith("Authorized") -> TerminalGreen
+                                    adbConnectionStatus.contains("unauthorized", ignoreCase = true) ||
+                                        adbConnectionStatus.contains("offline", ignoreCase = true) -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.outline
+                                }
+                            )
+                        )
+                        Text(
+                            text = adbConnectionStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
