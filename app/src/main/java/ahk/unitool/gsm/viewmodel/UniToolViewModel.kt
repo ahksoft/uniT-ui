@@ -72,6 +72,11 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
     private val _deviceInfo = MutableStateFlow<DeviceInfo?>(null)
     val deviceInfo: StateFlow<DeviceInfo?> = _deviceInfo.asStateFlow()
 
+    // ADB transport state is distinct from Android USB permission. "unauthorized"
+    // means the USB transport exists but the device has not approved this host key.
+    private val _adbConnectionStatus = MutableStateFlow("Not checked")
+    val adbConnectionStatus: StateFlow<String> = _adbConnectionStatus.asStateFlow()
+
     private val _antumbraUsbBackend = MutableStateFlow("auto")
     val antumbraUsbBackend: StateFlow<String> = _antumbraUsbBackend.asStateFlow()
     fun setAntumbraUsbBackend(backend: String) { _antumbraUsbBackend.value = backend }
@@ -755,8 +760,8 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
 
     fun runAdbService(action: String) {
         when (action) {
-            "connect" -> executeCommand("adb devices -l")
-            "devices" -> executeCommand("adb devices -l")
+            "connect" -> runAdbDeviceStatus()
+            "devices" -> runAdbDeviceStatus()
             "get_state" -> executeCommand("adb get-state")
             "restart_server" -> executeCommand("adb kill-server; adb start-server; adb devices -l")
             "device_info" -> runAdbDeviceInfoScript()
@@ -786,6 +791,55 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
             "list_disabled_packages" -> executeCommand("adb shell pm list packages -d")
             "list_all_packages" -> executeCommand("adb shell pm list packages")
             "dump_logcat" -> executeCommand("adb shell logcat -d -t 100")
+        }
+    }
+
+    private fun runAdbDeviceStatus() {
+        if (_isExecuting.value) return
+        val command = "adb devices -l"
+        appendLog("unitool:$ $command", LogLineType.INPUT)
+        _adbConnectionStatus.value = "Checking ADB transport…"
+        _isExecuting.value = true
+        _currentCommand.value = command
+
+        val captured = StringBuilder()
+        val captureOutput = object : TerminalOutput {
+            override fun print(text: String?) {
+                text?.let { captured.append(it); outputListener.print(it) }
+            }
+            override fun println(text: String?) {
+                text?.let { captured.append(it).append('\n'); outputListener.println(it) }
+            }
+            override fun println() {
+                captured.append('\n')
+                outputListener.println()
+            }
+            override fun error(text: String?) {
+                text?.let { outputListener.error(it) }
+            }
+            override fun clear() = outputListener.clear()
+        }
+
+        terminalSession.execute(command, captureOutput) {
+            mainHandler.post {
+                val transports = captured.toString().lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("List of devices attached") }
+                    .mapNotNull { line ->
+                        val columns = line.split(Regex("\\s+"))
+                        if (columns.size < 2) null else columns[1].lowercase()
+                    }
+                    .toList()
+                _adbConnectionStatus.value = when {
+                    "device" in transports -> "Authorized ADB device connected"
+                    "unauthorized" in transports -> "Device unauthorized — approve the USB debugging prompt"
+                    "offline" in transports -> "ADB device offline"
+                    transports.any { it.contains("no permissions") } -> "USB permission unavailable"
+                    else -> "No ADB device detected"
+                }
+                _isExecuting.value = false
+                _currentCommand.value = null
+            }
         }
     }
 
