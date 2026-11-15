@@ -319,7 +319,10 @@ public class UsbHostManager {
     }
 
     public void closeDevice(UsbDevice device) {
-        String key = device.getDeviceName();
+        if (device != null) closeDeviceByName(device.getDeviceName());
+    }
+
+    private void closeDeviceByName(String key) {
         UsbDeviceConnection conn = openConnections.remove(key);
         UsbInterface claimed = claimedInterfaces.remove(key);
         if (conn != null) {
@@ -329,6 +332,7 @@ public class UsbHostManager {
                 } catch (Exception ignored) {}
             }
             conn.close();
+            Log.i(TAG, "Closed stale USB connection: " + key);
         }
     }
 
@@ -368,8 +372,14 @@ public class UsbHostManager {
                 connectedDevices.put(key, new UsbDeviceInfo(device));
             }
         }
-        // Remove stale devices
-        connectedDevices.keySet().removeIf(key -> !current.containsKey(key));
+        // Remove stale devices and release their descriptors even if Android's
+        // detach broadcast was missed during a rapid USB mode transition.
+        for (String key : new ArrayList<>(connectedDevices.keySet())) {
+            if (!current.containsKey(key)) {
+                closeDeviceByName(key);
+                connectedDevices.remove(key);
+            }
+        }
     }
 
     public void onDeviceAttached(UsbDevice device) {
