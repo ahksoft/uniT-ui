@@ -766,7 +766,7 @@ fun ConnectScreen(
                 ) {
                     Icon(Icons.Default.Cable, contentDescription = null)
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("CONNECT  ·  RESTART ADB SERVER", fontWeight = FontWeight.Bold)
+                    Text("CONNECT  ·  CHECK ADB DEVICE", fontWeight = FontWeight.Bold)
                 }
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
