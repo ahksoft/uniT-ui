@@ -710,10 +710,34 @@ fun ConnectScreen(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Native binary: libfastboot.so. Connect phone in Bootloader mode (Vol Down + Power). Commands: fastboot devices, getvar all, flashing unlock, boot, flash.",
+                            text = "Read-only Fastboot and FastbootD diagnostics. Connect an authorized USB device in Bootloader or FastbootD mode. Results are printed in the shared terminal log.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                "Detect Device" to "devices",
+                                "All Variables" to "getvar_all",
+                                "Product" to "getvar_product",
+                                "Current Slot" to "getvar_slot",
+                                "Bootloader Version" to "getvar_version",
+                                "FastbootD State" to "getvar_userspace",
+                                "Secure State" to "getvar_secure"
+                            ).forEach { (label, action) ->
+                                OutlinedButton(
+                                    onClick = { viewModel.runFastbootService(action) },
+                                    enabled = !isExecuting,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.testTag("fastboot_action_$action")
+                                ) {
+                                    Text(label, fontSize = 12.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -776,12 +800,13 @@ fun ConnectScreen(
                     listOf(
                         "Status" to "devices",
                         "Get State" to "get_state",
-                        "TCP/IP 5555" to "tcpip",
                         "Device Info" to "device_info",
-                        "Battery Info" to "battery",
+                        "Battery" to "battery",
                         "CPU Info" to "cpuinfo",
-                        "Root" to "root",
-                        "Remount" to "remount",
+                        "Display" to "screen_size",
+                        "USB Mode" to "usb_state",
+                        "User Apps" to "list_user_packages",
+                        "Logcat Snapshot" to "dump_logcat",
                         "Reboot System" to "reboot_system",
                         "Reboot Recovery" to "reboot_recovery",
                         "Reboot Bootloader" to "reboot_bootloader"
