@@ -727,6 +727,7 @@ fun ConnectScreen(
                                 "Current Slot" to "getvar_slot",
                                 "Bootloader Version" to "getvar_version",
                                 "FastbootD State" to "getvar_userspace",
+                                "Bootloader Unlock State" to "getvar_unlocked",
                                 "Secure State" to "getvar_secure"
                             ).forEach { (label, action) ->
                                 OutlinedButton(
