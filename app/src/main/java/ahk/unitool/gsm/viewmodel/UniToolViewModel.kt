@@ -764,9 +764,11 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
 
     fun runAdbService(action: String) {
         when (action) {
+            "connect" -> executeCommand("adb kill-server; adb devices")
             "devices" -> executeCommand("adb devices -l")
             "get_state" -> executeCommand("adb get-state")
             "restart_server" -> executeCommand("adb kill-server; adb start-server; adb devices -l")
+            "device_info" -> runAdbDeviceInfoScript()
             "tcpip" -> executeCommand("adb tcpip 5555")
             "device_props" -> executeCommand("adb shell getprop ro.product.model; adb shell getprop ro.build.version.release; adb shell getprop ro.product.manufacturer")
             "battery" -> executeCommand("adb shell dumpsys battery")
@@ -790,6 +792,20 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
             "list_disabled_packages" -> executeCommand("adb shell pm list packages -d")
             "list_all_packages" -> executeCommand("adb shell pm list packages")
             "dump_logcat" -> executeCommand("adb shell logcat -d -t 100")
+        }
+    }
+
+    private fun runAdbDeviceInfoScript() {
+        val app = getApplication<Application>()
+        val script = File(app.filesDir, "scripts/adb-device-info.sh")
+        try {
+            script.parentFile?.mkdirs()
+            app.assets.open("scripts/adb-device-info.sh").use { input ->
+                script.outputStream().use { output -> input.copyTo(output) }
+            }
+            executeCommand("bash ${shellQuote(script.absolutePath)}")
+        } catch (e: Exception) {
+            appendLog("[ADB] Unable to prepare device-info script: ${e.message}", LogLineType.ERROR)
         }
     }
 

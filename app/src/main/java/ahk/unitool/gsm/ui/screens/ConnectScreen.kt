@@ -758,17 +758,26 @@ fun ConnectScreen(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
+                Button(
+                    onClick = { viewModel.runAdbService("connect") },
+                    enabled = !isExecuting,
+                    modifier = Modifier.fillMaxWidth().height(46.dp).testTag("adb_connect_button"),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Cable, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("CONNECT  ·  RESTART ADB SERVER", fontWeight = FontWeight.Bold)
+                }
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf(
-                        "Devices" to "devices",
+                        "Status" to "devices",
                         "Get State" to "get_state",
-                        "Restart Server" to "restart_server",
                         "TCP/IP 5555" to "tcpip",
-                        "Device Props" to "device_props",
+                        "Device Info" to "device_info",
                         "Battery Info" to "battery",
                         "CPU Info" to "cpuinfo",
                         "Root" to "root",
@@ -780,7 +789,8 @@ fun ConnectScreen(
                         OutlinedButton(
                             onClick = { viewModel.runAdbService(action) },
                             enabled = !isExecuting,
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("adb_action_$action")
                         ) {
                             Text(label, fontSize = 12.sp)
                         }
