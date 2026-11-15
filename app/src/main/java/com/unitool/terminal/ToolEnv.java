@@ -20,13 +20,53 @@ public final class ToolEnv {
 
     /** The directory that is used as the home directory of the programs. */
     public static File home(Context context) {
-        File home = new File(TerminalSession.appDirectory(context), "home");
-        if (!home.exists() && !home.mkdirs()) {
-            home = new File(context.getFilesDir(), "home");
+        // Keep HOME in app-private storage. ADB stores its RSA host identity in
+        // $HOME/.android/adbkey; shared storage is not suitable for a private host key.
+        File home = new File(context.getFilesDir(), "home");
+        if (!home.isDirectory() && !home.mkdirs() && !home.isDirectory()) {
+            throw new IllegalStateException("cannot create persistent UniTool HOME: "
+                    + home.getAbsolutePath());
+        }
+
+        File androidUserHome = new File(home, ".android");
+        if (!androidUserHome.isDirectory()) {
             //noinspection ResultOfMethodCallIgnored
-            home.mkdirs();
+            androidUserHome.mkdirs();
+        }
+
+        // Migrate the previous ADB identity before the first launch with the new HOME.
+        File oldAndroidHome = new File(TerminalSession.appDirectory(context), "home/.android");
+        if (!oldAndroidHome.getAbsoluteFile().equals(androidUserHome.getAbsoluteFile())) {
+            copyIfMissing(new File(oldAndroidHome, "adbkey"), new File(androidUserHome, "adbkey"));
+            copyIfMissing(new File(oldAndroidHome, "adbkey.pub"), new File(androidUserHome, "adbkey.pub"));
+        }
+
+        try {
+            android.system.Os.chmod(home.getAbsolutePath(), 0700);
+            android.system.Os.chmod(androidUserHome.getAbsolutePath(), 0700);
+            File privateKey = new File(androidUserHome, "adbkey");
+            if (privateKey.isFile()) android.system.Os.chmod(privateKey.getAbsolutePath(), 0600);
+            File publicKey = new File(androidUserHome, "adbkey.pub");
+            if (publicKey.isFile()) android.system.Os.chmod(publicKey.getAbsolutePath(), 0644);
+        } catch (Exception ignored) {
+            // App-private storage remains protected by Android application sandboxing.
         }
         return home;
+    }
+
+    private static void copyIfMissing(File source, File target) {
+        if (target.exists() || !source.isFile()) return;
+        try (java.io.FileInputStream input = new java.io.FileInputStream(source);
+             java.io.FileOutputStream output = new java.io.FileOutputStream(target)) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            output.flush();
+        } catch (Exception ignored) {
+            // If migration fails, ADB will request normal RSA authorization for its new key.
+            //noinspection ResultOfMethodCallIgnored
+            target.delete();
+        }
     }
 
     /**
@@ -62,7 +102,9 @@ public final class ToolEnv {
             libraryPath.append(libPath);
         }
 
-        env.put("HOME", home(context).getAbsolutePath());
+        File home = home(context);
+        env.put("HOME", home.getAbsolutePath());
+        env.put("ANDROID_USER_HOME", new File(home, ".android").getAbsolutePath());
         env.put("TMPDIR", new File(prefix, "tmp").isDirectory()
                 ? new File(prefix, "tmp").getAbsolutePath()
                 : context.getCacheDir().getAbsolutePath());
