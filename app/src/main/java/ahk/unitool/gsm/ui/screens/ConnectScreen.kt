@@ -94,6 +94,7 @@ fun ConnectScreen(
     val selectedDevice by viewModel.selectedDevice.collectAsState()
     val isExecuting by viewModel.isExecuting.collectAsState()
     val adbConnectionStatus by viewModel.adbConnectionStatus.collectAsState()
+    val fastbootConnectionStatus by viewModel.fastbootConnectionStatus.collectAsState()
 
     // MTK state
     val mtkLoader by viewModel.mtkLoader.collectAsState()
@@ -715,6 +716,35 @@ fun ConnectScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Card(
+                            modifier = Modifier.fillMaxWidth().testTag("fastboot_transport_status"),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(8.dp).clip(CircleShape).background(
+                                        if (fastbootConnectionStatus.startsWith("Fastboot device")) {
+                                            TerminalGreen
+                                        } else {
+                                            MaterialTheme.colorScheme.outline
+                                        }
+                                    )
+                                )
+                                Text(
+                                    text = fastbootConnectionStatus,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
                         FlowRow(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
