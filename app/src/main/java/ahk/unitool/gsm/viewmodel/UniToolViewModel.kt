@@ -77,6 +77,9 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
     private val _adbConnectionStatus = MutableStateFlow("Not checked")
     val adbConnectionStatus: StateFlow<String> = _adbConnectionStatus.asStateFlow()
 
+    private val _fastbootConnectionStatus = MutableStateFlow("Not checked")
+    val fastbootConnectionStatus: StateFlow<String> = _fastbootConnectionStatus.asStateFlow()
+
     private val _antumbraUsbBackend = MutableStateFlow("auto")
     val antumbraUsbBackend: StateFlow<String> = _antumbraUsbBackend.asStateFlow()
     fun setAntumbraUsbBackend(backend: String) { _antumbraUsbBackend.value = backend }
@@ -746,7 +749,7 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         // Read-only Fastboot diagnostics. Keep these actions routed through the
         // shared terminal so USB FD ownership and command output stay unified.
         when (action) {
-            "devices" -> executeCommand("fastboot devices -l")
+            "devices" -> runFastbootDeviceStatus()
             "getvar_all" -> executeCommand("fastboot getvar all")
             "getvar_unlocked" -> executeCommand("fastboot getvar unlocked")
             "getvar_slot" -> executeCommand("fastboot getvar current-slot")
@@ -755,6 +758,57 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
             "getvar_userspace" -> executeCommand("fastboot getvar is-userspace")
             "getvar_secure" -> executeCommand("fastboot getvar secure")
             "device_info" -> executeCommand("fastboot getvar all")
+        }
+    }
+
+    private fun runFastbootDeviceStatus() {
+        if (_isExecuting.value) return
+        val command = "fastboot devices -l"
+        appendLog("unitool:$ $command", LogLineType.INPUT)
+        _fastbootConnectionStatus.value = "Checking Fastboot transport…"
+        _isExecuting.value = true
+        _currentCommand.value = command
+
+        val captured = StringBuilder()
+        val captureOutput = object : TerminalOutput {
+            override fun print(text: String?) {
+                text?.let { captured.append(it); outputListener.print(it) }
+            }
+            override fun println(text: String?) {
+                text?.let { captured.append(it).append('\n'); outputListener.println(it) }
+            }
+            override fun println() {
+                captured.append('\n')
+                outputListener.println()
+            }
+            override fun error(text: String?) {
+                text?.let { captured.append(it).append('\n'); outputListener.error(it) }
+            }
+            override fun clear() = outputListener.clear()
+        }
+
+        terminalSession.execute(command, captureOutput) {
+            mainHandler.post {
+                val output = captured.toString()
+                val deviceLine = output.lineSequence()
+                    .map { it.trim() }
+                    .firstOrNull {
+                        it.isNotEmpty() &&
+                            !it.startsWith("fastboot:", ignoreCase = true) &&
+                            !it.contains("no permissions", ignoreCase = true)
+                    }
+                _fastbootConnectionStatus.value = when {
+                    output.contains("no permissions", ignoreCase = true) ->
+                        "USB permission unavailable"
+                    output.contains("error", ignoreCase = true) && deviceLine == null ->
+                        "Fastboot command failed — check the packaged platform-tools"
+                    deviceLine != null ->
+                        "Fastboot device connected · ${deviceLine.substringBefore(Regex("\\s+"))}"
+                    else -> "No Fastboot device detected"
+                }
+                _isExecuting.value = false
+                _currentCommand.value = null
+            }
         }
     }
 
