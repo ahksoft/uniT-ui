@@ -231,12 +231,19 @@ internal object NativeToolchain {
                 throw IllegalStateException("Package symlink parent escapes PREFIX: $linkPath")
             }
 
-            val target = File(root, targetPath).canonicalFile
-            if (!target.isFile && !target.isDirectory) {
-                throw IllegalStateException("Package symlink target is missing: $targetPath")
-            }
+            // Preserve the final path component instead of canonicalizing it:
+            // native command targets such as bin/coreutils are themselves symlinks
+            // into ApplicationInfo.nativeLibraryDir. Their in-PREFIX alias path is
+            // valid even though resolving the final symlink leaves PREFIX.
+            val unresolvedTarget = File(root, targetPath).absoluteFile
+            val targetParent = unresolvedTarget.parentFile
+                ?: throw IllegalStateException("Package symlink target has no parent: $targetPath")
+            val target = File(targetParent.canonicalFile, unresolvedTarget.name)
             if (target.path != root.path && !target.path.startsWith(root.path + File.separator)) {
                 throw IllegalStateException("Package symlink target escapes PREFIX: $targetPath")
+            }
+            if (!target.isFile && !target.isDirectory) {
+                throw IllegalStateException("Package symlink target is missing: $targetPath")
             }
             if (!createLink(File(safeParent, link.name), target)) {
                 throw IllegalStateException("Cannot create package symlink: $linkPath -> $targetPath")
