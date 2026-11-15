@@ -69,10 +69,10 @@ public class ShellSession {
         // Use a private rc file instead of --norc. The explicit cd is needed on
         // Android PTYs where the requested child cwd can be ignored by the launcher.
         File rcFile = new File(context.getFilesDir(), "unitool-bashrc");
-        String rcContents = "# UniTool interactive shell initialization\\n"
-                + "if [ -n \"\u0024{HOME:-}\" ] && [ -d \"\u0024HOME\" ]; then\\n"
-                + "    cd -- \"\u0024HOME\" || :\\n"
-                + "fi\\n";
+        String rcContents = "# UniTool interactive shell initialization\n"
+                + "if [ -n \"${HOME:-}\" ] && [ -d \"$HOME\" ]; then\n"
+                + "    cd -- \"$HOME\" || :\n"
+                + "fi\n";
         try (java.io.FileOutputStream stream = new java.io.FileOutputStream(rcFile, false)) {
             stream.write(rcContents.getBytes(StandardCharsets.UTF_8));
             stream.flush();
