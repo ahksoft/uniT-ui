@@ -97,7 +97,8 @@ public class TerminalSession {
      * payloads and the loaders are kept.
      */
     private static File defaultWorkingDir(Context context) {
-        return appDirectory(context);
+        // The shell starts in the same persistent private HOME used by ADB.
+        return ToolEnv.home(context);
     }
 
     public MtkProtocol getMtkProtocol() {
@@ -596,15 +597,15 @@ public class TerminalSession {
     private void cd(List<String> args, TerminalOutput out) {
         if (args.isEmpty()) {
             // without an argument the shell goes home
-            workingDir = appDirectory(context);
+            workingDir = ToolEnv.home(context);
             return;
         }
         String path = args.get(0);
         File target;
         if (path.equals("~")) {
-            target = appDirectory(context);
+            target = ToolEnv.home(context);
         } else if (path.startsWith("~/")) {
-            target = new File(appDirectory(context), path.substring(2));
+            target = new File(ToolEnv.home(context), path.substring(2));
         } else if (path.startsWith("/")) {
             target = new File(path);
         } else {
@@ -732,14 +733,14 @@ public class TerminalSession {
 
     /** The directory of the app, everything the tools write is kept there. */
     public File getHomeDirectory() {
-        return appDirectory(context);
+        return ToolEnv.home(context);
     }
 
     /** Short name of the working directory, used for the prompt. */
     public String getWorkingDirName() {
         try {
             String path = workingDir.getAbsolutePath();
-            for (File home : new File[]{appDirectory(context), context.getFilesDir()}) {
+            for (File home : new File[]{ToolEnv.home(context), appDirectory(context), context.getFilesDir()}) {
                 String base = home.getAbsolutePath();
                 if (path.equals(base)) return "~";
                 if (path.startsWith(base + File.separator)) {
@@ -753,14 +754,29 @@ public class TerminalSession {
     }
 
     /** The prompt of the terminal, the shell shows the directory it is in. */
+    private String shellUserName() {
+        int uid = android.os.Process.myUid();
+        int userId = uid / 100000;
+        int appId = uid % 100000;
+        return appId >= 10000 ? "u" + userId + "_a" + (appId - 10000) : "u" + userId;
+    }
+
+    private String shortHomePath(String path) {
+        if (path == null || path.isEmpty()) return "~";
+        String home = ToolEnv.home(context).getAbsolutePath();
+        if (path.equals(home)) return "~";
+        if (path.startsWith(home + File.separator)) {
+            return "~" + path.substring(home.length());
+        }
+        return path;
+    }
+
     public String getPrompt() {
         ShellSession current = shell;
-        if (current != null) {
-            String dir = current.getWorkingDir();
-            if (dir == null || dir.isEmpty()) return "unitool:$ ";
-            return "unitool:" + dir + " $ ";
-        }
-        return "unitool:" + getWorkingDirName() + " $ ";
+        String directory = current != null
+                ? shortHomePath(current.getWorkingDir())
+                : getWorkingDirName();
+        return shellUserName() + "@unitool " + directory + " $ ";
     }
 
     /** True while the interactive shell is running. */
