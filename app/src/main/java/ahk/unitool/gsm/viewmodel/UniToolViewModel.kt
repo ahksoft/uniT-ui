@@ -764,7 +764,7 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
 
     fun runAdbService(action: String) {
         when (action) {
-            "connect" -> executeCommand("adb kill-server; adb devices")
+            "connect" -> executeCommand("adb devices -l")
             "devices" -> executeCommand("adb devices -l")
             "get_state" -> executeCommand("adb get-state")
             "restart_server" -> executeCommand("adb kill-server; adb start-server; adb devices -l")
