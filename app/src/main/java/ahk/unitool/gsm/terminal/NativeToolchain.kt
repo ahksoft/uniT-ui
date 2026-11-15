@@ -19,7 +19,7 @@ internal object NativeToolchain {
     private const val BOOTSTRAP_ASSET = "bootstrap"
     private const val LINK_MAP_ASSET = "lib_symlinks.properties"
     private const val PYTHON_RUNTIME_ASSET = "termux-python-runtime.zip"
-    private const val BOOTSTRAP_VERSION = "14"
+    private const val BOOTSTRAP_VERSION = "15"
 
     data class Environment(
         val prefix: String,
@@ -50,8 +50,11 @@ internal object NativeToolchain {
             }
         }
 
-        installBootstrap(context, prefix, homeDir)
+        // Native ELF aliases must exist before package_symlinks.tsv is applied:
+        // Termux's package manifest links applets (for example bin/ls) to
+        // bin/coreutils, which itself is provided by libcoreutils.so.
         val available = installCommandLinks(context, nativeDir, prefix).toMutableSet()
+        installBootstrap(context, prefix, homeDir)
         listOf("git", "curl", "wget", "openssl", "less", "python", "python3", "pip", "pip3", "pip3.14", "pkg", "apt", "apt-get", "apt-cache", "dpkg", "dpkg-deb", "dpkg-query").forEach { command ->
             if (File(binDir, command).canExecute()) available.add(command)
         }
