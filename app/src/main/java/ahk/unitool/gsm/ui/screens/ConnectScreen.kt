@@ -1,6 +1,8 @@
 package ahk.unitool.gsm.ui.screens
 
 import android.net.Uri
+import android.provider.OpenableColumns
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -88,11 +90,14 @@ fun ConnectScreen(
     viewModel: UniToolViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val protocolMode by viewModel.protocolMode.collectAsState()
     val mtkEngineVersion by viewModel.mtkEngineVersion.collectAsState()
     val connectedDevices by viewModel.connectedDevices.collectAsState()
     val selectedDevice by viewModel.selectedDevice.collectAsState()
     val isExecuting by viewModel.isExecuting.collectAsState()
+    val adbConnectionStatus by viewModel.adbConnectionStatus.collectAsState()
+    val fastbootConnectionStatus by viewModel.fastbootConnectionStatus.collectAsState()
 
     // MTK state
     val mtkLoader by viewModel.mtkLoader.collectAsState()
@@ -115,14 +120,25 @@ fun ConnectScreen(
     val qcStorage by viewModel.qcStorage.collectAsState()
 
     var storageMenuExpanded by remember { mutableStateOf(false) }
+    var adbRemotePath by remember { mutableStateOf("/sdcard/Download") }
+    var adbLocalFilePath by remember { mutableStateOf("") }
 
     // Helper launcher for picking files
     var targetFilePickerTarget by remember { mutableStateOf<String?>(null) }
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let {
-            val fileName = it.lastPathSegment?.substringAfterLast('/') ?: it.toString()
+        uri?.let { selectedUri ->
+            val displayName = context.contentResolver.query(
+                selectedUri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+            val fileName = displayName ?: selectedUri.lastPathSegment?.substringAfterLast('/') ?: "adb-upload"
             when (targetFilePickerTarget) {
                 "mtk_da" -> viewModel.setMtkLoader(fileName)
                 "mtk_auth" -> viewModel.setMtkAuth(fileName)
@@ -133,6 +149,21 @@ fun ConnectScreen(
                 "qc_auth" -> viewModel.setQcAuth(fileName)
                 "qc_cert" -> viewModel.setQcCert(fileName)
                 "qc_digest" -> viewModel.setQcDigest(fileName)
+                "adb_push" -> {
+                    val safeName = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                    val transferDir = File(context.cacheDir, "adb-transfer").apply { mkdirs() }
+                    val localFile = File(transferDir, safeName)
+                    try {
+                        val inputStream = context.contentResolver.openInputStream(selectedUri)
+                            ?: throw IllegalStateException("Selected file could not be opened")
+                        inputStream.use { input ->
+                            localFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        adbLocalFilePath = localFile.absolutePath
+                    } catch (error: Exception) {
+                        viewModel.executeCommand("echo " + viewModel.shellQuote("Unable to import selected file: " + (error.message ?: "unknown error")))
+                    }
+                }
             }
         }
     }
@@ -252,7 +283,7 @@ fun ConnectScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (selectedDevice != null) "Device: ${selectedDevice!!.vidPidHex} (${selectedDevice!!.displayName ?: "Connected"})" else "No USB Device Connected",
+                        text = if (selectedDevice != null) "${selectedDevice!!.connectionModeLabel} · ${selectedDevice!!.displayName ?: "Connected"}" else "No USB Device Connected",
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold,
@@ -710,10 +741,64 @@ fun ConnectScreen(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            text = "Native binary: libfastboot.so. Connect phone in Bootloader mode (Vol Down + Power). Commands: fastboot devices, getvar all, flashing unlock, boot, flash.",
+                            text = "Read-only Fastboot and FastbootD diagnostics. Connect an authorized USB device in Bootloader or FastbootD mode. Results are printed in the shared terminal log.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Card(
+                            modifier = Modifier.fillMaxWidth().testTag("fastboot_transport_status"),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier.size(8.dp).clip(CircleShape).background(
+                                        if (fastbootConnectionStatus.startsWith("Fastboot device")) {
+                                            TerminalGreen
+                                        } else {
+                                            MaterialTheme.colorScheme.outline
+                                        }
+                                    )
+                                )
+                                Text(
+                                    text = fastbootConnectionStatus,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                "Detect Device" to "devices",
+                                "All Variables" to "getvar_all",
+                                "Product" to "getvar_product",
+                                "Current Slot" to "getvar_slot",
+                                "Bootloader Version" to "getvar_version",
+                                "FastbootD State" to "getvar_userspace",
+                                "Bootloader Unlock State" to "getvar_unlocked",
+                                "Secure State" to "getvar_secure"
+                            ).forEach { (label, action) ->
+                                OutlinedButton(
+                                    onClick = { viewModel.runFastbootService(action) },
+                                    enabled = !isExecuting,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.testTag("fastboot_action_$action")
+                                ) {
+                                    Text(label, fontSize = 12.sp)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -758,21 +843,61 @@ fun ConnectScreen(
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
                 )
+                Button(
+                    onClick = { viewModel.runAdbService("connect") },
+                    enabled = !isExecuting,
+                    modifier = Modifier.fillMaxWidth().height(46.dp).testTag("adb_connect_button"),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Cable, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("CONNECT  ·  CHECK ADB DEVICE", fontWeight = FontWeight.Bold)
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("adb_transport_status"),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier.size(8.dp).clip(CircleShape).background(
+                                when {
+                                    adbConnectionStatus.startsWith("Authorized") -> TerminalGreen
+                                    adbConnectionStatus.contains("unauthorized", ignoreCase = true) ||
+                                        adbConnectionStatus.contains("offline", ignoreCase = true) -> MaterialTheme.colorScheme.error
+                                    else -> MaterialTheme.colorScheme.outline
+                                }
+                            )
+                        )
+                        Text(
+                            text = adbConnectionStatus,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf(
-                        "Devices" to "devices",
+                        "Status" to "devices",
                         "Get State" to "get_state",
-                        "Restart Server" to "restart_server",
-                        "TCP/IP 5555" to "tcpip",
-                        "Device Props" to "device_props",
-                        "Battery Info" to "battery",
+                        "Device Info" to "device_info",
+                        "Battery" to "battery",
                         "CPU Info" to "cpuinfo",
-                        "Root" to "root",
-                        "Remount" to "remount",
+                        "Display" to "screen_size",
+                        "USB Mode" to "usb_state",
+                        "User Apps" to "list_user_packages",
+                        "Logcat Snapshot" to "dump_logcat",
                         "Reboot System" to "reboot_system",
                         "Reboot Recovery" to "reboot_recovery",
                         "Reboot Bootloader" to "reboot_bootloader"
@@ -780,10 +905,96 @@ fun ConnectScreen(
                         OutlinedButton(
                             onClick = { viewModel.runAdbService(action) },
                             enabled = !isExecuting,
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("adb_action_$action")
                         ) {
                             Text(label, fontSize = 12.sp)
                         }
+                    }
+                }
+
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth().testTag("adb_file_manager"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("ADB FILE MANAGER", fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary)
+                        }
+                        Text(
+                            "Browse and transfer files on an authorized ADB device. Directory output appears in the shared terminal log.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = adbRemotePath,
+                            onValueChange = { adbRemotePath = it },
+                            label = { Text("Remote device path") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("adb_remote_path")
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.executeCommand(
+                                        "adb shell ls -la " + viewModel.shellQuote(adbRemotePath)
+                                    )
+                                },
+                                enabled = !isExecuting && adbRemotePath.isNotBlank(),
+                                modifier = Modifier.weight(1f)
+                            ) { Text("LIST") }
+                            OutlinedButton(
+                                onClick = {
+                                    val destination = File(context.filesDir, "adb-downloads").apply { mkdirs() }
+                                    viewModel.executeCommand(
+                                        "adb pull " + viewModel.shellQuote(adbRemotePath) + " " +
+                                            viewModel.shellQuote(destination.absolutePath)
+                                    )
+                                },
+                                enabled = !isExecuting && adbRemotePath.isNotBlank(),
+                                modifier = Modifier.weight(1f)
+                            ) { Text("PULL TO APP") }
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                targetFilePickerTarget = "adb_push"
+                                filePickerLauncher.launch(arrayOf("*/*"))
+                            },
+                            enabled = !isExecuting,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.FileOpen, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (adbLocalFilePath.isBlank()) "SELECT LOCAL FILE" else "CHANGE LOCAL FILE")
+                        }
+                        if (adbLocalFilePath.isNotBlank()) {
+                            Text(
+                                text = adbLocalFilePath,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                viewModel.executeCommand(
+                                    "adb push " + viewModel.shellQuote(adbLocalFilePath) + " " +
+                                        viewModel.shellQuote(adbRemotePath)
+                                )
+                            },
+                            enabled = !isExecuting && adbLocalFilePath.isNotBlank() && adbRemotePath.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("PUSH TO DEVICE") }
                     }
                 }
             }

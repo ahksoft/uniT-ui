@@ -19,7 +19,7 @@ internal object NativeToolchain {
     private const val BOOTSTRAP_ASSET = "bootstrap"
     private const val LINK_MAP_ASSET = "lib_symlinks.properties"
     private const val PYTHON_RUNTIME_ASSET = "termux-python-runtime.zip"
-    private const val BOOTSTRAP_VERSION = "14"
+    private const val BOOTSTRAP_VERSION = "15"
 
     data class Environment(
         val prefix: String,
@@ -50,8 +50,11 @@ internal object NativeToolchain {
             }
         }
 
-        installBootstrap(context, prefix, homeDir)
+        // Native ELF aliases must exist before package_symlinks.tsv is applied:
+        // Termux's package manifest links applets (for example bin/ls) to
+        // bin/coreutils, which itself is provided by libcoreutils.so.
         val available = installCommandLinks(context, nativeDir, prefix).toMutableSet()
+        installBootstrap(context, prefix, homeDir)
         listOf("git", "curl", "wget", "openssl", "less", "python", "python3", "pip", "pip3", "pip3.14", "pkg", "apt", "apt-get", "apt-cache", "dpkg", "dpkg-deb", "dpkg-query").forEach { command ->
             if (File(binDir, command).canExecute()) available.add(command)
         }
@@ -228,12 +231,19 @@ internal object NativeToolchain {
                 throw IllegalStateException("Package symlink parent escapes PREFIX: $linkPath")
             }
 
-            val target = File(root, targetPath).canonicalFile
-            if (!target.isFile && !target.isDirectory) {
-                throw IllegalStateException("Package symlink target is missing: $targetPath")
-            }
+            // Preserve the final path component instead of canonicalizing it:
+            // native command targets such as bin/coreutils are themselves symlinks
+            // into ApplicationInfo.nativeLibraryDir. Their in-PREFIX alias path is
+            // valid even though resolving the final symlink leaves PREFIX.
+            val unresolvedTarget = File(root, targetPath).absoluteFile
+            val targetParent = unresolvedTarget.parentFile
+                ?: throw IllegalStateException("Package symlink target has no parent: $targetPath")
+            val target = File(targetParent.canonicalFile, unresolvedTarget.name)
             if (target.path != root.path && !target.path.startsWith(root.path + File.separator)) {
                 throw IllegalStateException("Package symlink target escapes PREFIX: $targetPath")
+            }
+            if (!target.isFile && !target.isDirectory) {
+                throw IllegalStateException("Package symlink target is missing: $targetPath")
             }
             if (!createLink(File(safeParent, link.name), target)) {
                 throw IllegalStateException("Cannot create package symlink: $linkPath -> $targetPath")

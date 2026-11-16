@@ -1,6 +1,12 @@
 package ahk.unitool.gsm.viewmodel
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
@@ -65,6 +71,14 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
 
     private val _deviceInfo = MutableStateFlow<DeviceInfo?>(null)
     val deviceInfo: StateFlow<DeviceInfo?> = _deviceInfo.asStateFlow()
+
+    // ADB transport state is distinct from Android USB permission. "unauthorized"
+    // means the USB transport exists but the device has not approved this host key.
+    private val _adbConnectionStatus = MutableStateFlow("Not checked")
+    val adbConnectionStatus: StateFlow<String> = _adbConnectionStatus.asStateFlow()
+
+    private val _fastbootConnectionStatus = MutableStateFlow("Not checked")
+    val fastbootConnectionStatus: StateFlow<String> = _fastbootConnectionStatus.asStateFlow()
 
     private val _antumbraUsbBackend = MutableStateFlow("auto")
     val antumbraUsbBackend: StateFlow<String> = _antumbraUsbBackend.asStateFlow()
@@ -178,9 +192,43 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    private val usbEventsReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    appendLog("USB device attached; detecting mode…", LogLineType.SYSTEM)
+                    rescanUsb()
+                }
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    appendLog("USB device detached.", LogLineType.SYSTEM)
+                    rescanUsb()
+                }
+                "com.unitool.USB_PERMISSION" -> rescanUsb()
+            }
+        }
+    }
+
+    private var usbEventsReceiverRegistered = false
+
     init {
         appendLog("UniTool Native Material You Initialized.", LogLineType.SYSTEM)
-        appendLog("Separate protocol configurations loaded: MTK, SPD, QC, Fastboot, ADB.", LogLineType.SYSTEM)
+        appendLog("USB event-driven discovery enabled; CLI tools use the shared USB FD broker.", LogLineType.SYSTEM)
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            addAction("com.unitool.USB_PERMISSION")
+        }
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                application.registerReceiver(usbEventsReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            } else {
+                @Suppress("DEPRECATION")
+                application.registerReceiver(usbEventsReceiver, filter)
+            }
+            usbEventsReceiverRegistered = true
+        } catch (e: Exception) {
+            appendLog("USB event listener registration failed: ${e.message}", LogLineType.ERROR)
+        }
         rescanUsb()
     }
 
@@ -199,20 +247,39 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch(Dispatchers.IO) {
             usbHostManager.rescan()
             val list = usbHostManager.listDevices() ?: emptyList()
+            val previous = _connectedDevices.value
             _connectedDevices.value = list
-            if (list.isNotEmpty()) {
-                val dev = list[0]
-                _selectedDevice.value = dev
-                appendLog("USB Device: ${dev.vidPidHex} ${dev.displayName ?: "Generic"} attached.", LogLineType.SYSTEM)
-                if (dev.isMediaTek) {
-                    _protocolMode.value = DeviceProtocolMode.MTK
-                } else if (dev.isSpreadtrum) {
-                    _protocolMode.value = DeviceProtocolMode.SPD
+            val selected = list.firstOrNull()
+            _selectedDevice.value = selected
+
+            if (list != previous) {
+                if (selected != null) {
+                    appendLog("USB detected: ${selected.connectionModeLabel} · ${selected.displayName}.", LogLineType.SYSTEM)
+                } else if (previous.isNotEmpty()) {
+                    appendLog("No USB device connected.", LogLineType.SYSTEM)
                 }
-            } else {
-                _selectedDevice.value = null
+            }
+
+            when (selected?.connectionModeLabel?.substringBefore(" ·")) {
+                "MTK" -> _protocolMode.value = DeviceProtocolMode.MTK
+                "UNISOC" -> _protocolMode.value = DeviceProtocolMode.SPD
+                "QUALCOMM" -> _protocolMode.value = DeviceProtocolMode.QUALCOMM
+                "FASTBOOT" -> _protocolMode.value = DeviceProtocolMode.FASTBOOT
+                "ADB" -> _protocolMode.value = DeviceProtocolMode.ADB
             }
         }
+    }
+
+    override fun onCleared() {
+        if (usbEventsReceiverRegistered) {
+            try {
+                getApplication<Application>().unregisterReceiver(usbEventsReceiver)
+            } catch (_: IllegalArgumentException) {
+            }
+            usbEventsReceiverRegistered = false
+        }
+        terminalSession.close()
+        super.onCleared()
     }
 
     // Setters for MTK
@@ -417,12 +484,23 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
 
     fun readPartitions() {
         _isLoadingPartitions.value = true
-        val cmd = if (_mtkEngineVersion.value == MtkEngineVersion.MTK_V1_MTKCLIENT) {
-            "mtkclient printgpt${mtkAuthOption()}"
-        } else {
-            "mtk partitions${mtkDeviceOptions()}"
+        val cmd = when (_protocolMode.value) {
+            DeviceProtocolMode.ADB ->
+                "adb shell ls -l /dev/block/by-name /dev/block/bootdevice/by-name 2>/dev/null"
+            DeviceProtocolMode.FASTBOOT ->
+                "fastboot getvar all"
+            else -> if (_mtkEngineVersion.value == MtkEngineVersion.MTK_V1_MTKCLIENT) {
+                "mtkclient printgpt${mtkAuthOption()}"
+            } else {
+                "mtk partitions${mtkDeviceOptions()}"
+            }
         }
-        appendLog("Reading GPT partition table via ${_mtkEngineVersion.value.title}: $cmd", LogLineType.INPUT)
+        val sourceLabel = when (_protocolMode.value) {
+            DeviceProtocolMode.ADB -> "ADB by-name metadata"
+            DeviceProtocolMode.FASTBOOT -> "Fastboot partition variables"
+            else -> "MTK GPT via ${_mtkEngineVersion.value.title}"
+        }
+        appendLog("Reading $sourceLabel: $cmd", LogLineType.INPUT)
         _isExecuting.value = true
         _currentCommand.value = cmd
 
@@ -467,8 +545,39 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         val lines = output.lines()
         val pPattern = Pattern.compile("(?i)(?:partition|name):?\\s*([a-zA-Z0-9_\\-]+).*?(?:size:?\\s*(0x[0-9a-fA-F]+|[0-9]+[KMG]?B?))?")
         val tablePattern = Pattern.compile("^\\s*(\\d+)\\s+([a-zA-Z0-9_\\-]+)\\s+(0x[0-9a-fA-F]+|[0-9]+)\\s+(0x[0-9a-fA-F]+|[0-9]+)")
+        val fastbootSizePattern = Pattern.compile("(?i)partition-size:([^:]+):\\s*(0x[0-9a-f]+|[0-9]+)")
+        val fastbootTypePattern = Pattern.compile("(?i)partition-type:([^:]+):\\s*(\\S+)")
 
         for (line in lines) {
+            val fbSize = fastbootSizePattern.matcher(line)
+            if (fbSize.find()) {
+                val name = fbSize.group(1)?.trim().orEmpty()
+                val size = fbSize.group(2)?.trim().orEmpty()
+                if (name.isNotEmpty()) {
+                    list.add(PartitionInfo(name, size, formatBytes(size), flags = "Fastboot"))
+                }
+                continue
+            }
+            val fbType = fastbootTypePattern.matcher(line)
+            if (fbType.find()) {
+                val name = fbType.group(1)?.trim().orEmpty()
+                val type = fbType.group(2)?.trim().orEmpty()
+                if (name.isNotEmpty()) {
+                    val existing = list.indexOfFirst { it.name.equals(name, ignoreCase = true) }
+                    if (existing >= 0) list[existing] = list[existing].copy(flags = type)
+                    else list.add(PartitionInfo(name, flags = type))
+                }
+                continue
+            }
+            val arrow = line.indexOf(" -> ")
+            if (arrow > 0 && line.trimStart().startsWith("l")) {
+                val name = line.substring(0, arrow).trim().substringAfterLast(' ')
+                val target = line.substring(arrow + 4).trim()
+                if (name.matches(Regex("[A-Za-z0-9_.-]+"))) {
+                    list.add(PartitionInfo(name = name, offsetHex = target, flags = "ADB by-name link"))
+                }
+                continue
+            }
             val tMatcher = tablePattern.matcher(line.trim())
             if (tMatcher.find()) {
                 val name = tMatcher.group(2) ?: ""
@@ -487,29 +596,15 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
             }
         }
 
+        _partitions.value = list.distinctBy { it.name.lowercase() }
         if (list.isEmpty()) {
-            val common = listOf(
-                PartitionInfo("boot", "0x04000000", "64 MB"),
-                PartitionInfo("init_boot", "0x00800000", "8 MB"),
-                PartitionInfo("dtbo", "0x00800000", "8 MB"),
-                PartitionInfo("vbmeta", "0x00800000", "8 MB"),
-                PartitionInfo("vbmeta_system", "0x00400000", "4 MB"),
-                PartitionInfo("super", "0x200000000", "8 GB"),
-                PartitionInfo("userdata", "0x800000000", "32 GB"),
-                PartitionInfo("recovery", "0x04000000", "64 MB"),
-                PartitionInfo("misc", "0x00100000", "1 MB"),
-                PartitionInfo("metadata", "0x01000000", "16 MB"),
-                PartitionInfo("nvram", "0x00500000", "5 MB"),
-                PartitionInfo("nvdata", "0x02000000", "32 MB"),
-                PartitionInfo("proinfo", "0x00300000", "3 MB"),
-                PartitionInfo("seccfg", "0x00800000", "8 MB"),
-                PartitionInfo("preloader", "0x00040000", "256 KB")
+            appendLog(
+                "[WARN] No partition entries were parsed from the device response. " +
+                    "No example or guessed partition sizes have been added.",
+                LogLineType.SYSTEM
             )
-            _partitions.value = common
-            appendLog("[INFO] Loaded ${common.size} standard device partitions.", LogLineType.SYSTEM)
         } else {
-            _partitions.value = list
-            appendLog("[SUCCESS] Parsed ${list.size} partitions from GPT.", LogLineType.SYSTEM)
+            appendLog("[SUCCESS] Parsed ${_partitions.value.size} partitions from device output.", LogLineType.SYSTEM)
         }
     }
 
@@ -679,40 +774,87 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun runFastbootService(action: String) {
+        // Read-only Fastboot diagnostics. Keep these actions routed through the
+        // shared terminal so USB FD ownership and command output stay unified.
         when (action) {
-            "devices" -> executeCommand("fastboot devices -l")
+            "devices" -> runFastbootDeviceStatus()
             "getvar_all" -> executeCommand("fastboot getvar all")
             "getvar_unlocked" -> executeCommand("fastboot getvar unlocked")
             "getvar_slot" -> executeCommand("fastboot getvar current-slot")
-            "device_info" -> executeCommand("fastboot oem device-info")
-            "unlock_flashing" -> executeCommand("fastboot flashing unlock")
-            "lock_flashing" -> executeCommand("fastboot flashing lock")
-            "unlock_critical" -> executeCommand("fastboot flashing unlock_critical")
-            "oem_unlock" -> executeCommand("fastboot oem unlock")
-            "erase_frp" -> executeCommand("fastboot erase frp")
-            "erase_userdata" -> executeCommand("fastboot erase userdata")
-            "erase_cache" -> executeCommand("fastboot erase cache")
-            "set_slot_a" -> executeCommand("fastboot --set-active=a")
-            "set_slot_b" -> executeCommand("fastboot --set-active=b")
-            "reboot_system" -> executeCommand("fastboot reboot")
-            "reboot_bootloader" -> executeCommand("fastboot reboot bootloader")
-            "reboot_fastbootd" -> executeCommand("fastboot reboot fastboot")
-            "reboot_recovery" -> executeCommand("fastboot reboot recovery")
-            "reboot_edl" -> executeCommand("fastboot oem edl; fastboot reboot-edl")
-            "disable_avb" -> executeCommand("fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img")
+            "getvar_product" -> executeCommand("fastboot getvar product")
+            "getvar_version" -> executeCommand("fastboot getvar version-bootloader")
+            "getvar_userspace" -> executeCommand("fastboot getvar is-userspace")
+            "getvar_secure" -> executeCommand("fastboot getvar secure")
+            "device_info" -> executeCommand("fastboot getvar all")
+        }
+    }
+
+    private fun runFastbootDeviceStatus() {
+        if (_isExecuting.value) return
+        val command = "fastboot devices -l"
+        appendLog("unitool:$ $command", LogLineType.INPUT)
+        _fastbootConnectionStatus.value = "Checking Fastboot transport…"
+        _isExecuting.value = true
+        _currentCommand.value = command
+
+        val captured = StringBuilder()
+        val captureOutput = object : TerminalOutput {
+            override fun print(text: String?) {
+                text?.let { captured.append(it); outputListener.print(it) }
+            }
+            override fun println(text: String?) {
+                text?.let { captured.append(it).append('\n'); outputListener.println(it) }
+            }
+            override fun println() {
+                captured.append('\n')
+                outputListener.println()
+            }
+            override fun error(text: String?) {
+                text?.let { captured.append(it).append('\n'); outputListener.error(it) }
+            }
+            override fun clear() = outputListener.clear()
+        }
+
+        terminalSession.execute(command, captureOutput) {
+            mainHandler.post {
+                val output = captured.toString()
+                val deviceLine = output.lineSequence()
+                    .map { it.trim() }
+                    .firstOrNull {
+                        it.isNotEmpty() &&
+                            !it.startsWith("fastboot:", ignoreCase = true) &&
+                            !it.contains("no permissions", ignoreCase = true)
+                    }
+                _fastbootConnectionStatus.value = when {
+                    output.contains("no permissions", ignoreCase = true) ->
+                        "USB permission unavailable"
+                    output.contains("error", ignoreCase = true) && deviceLine == null ->
+                        "Fastboot command failed — check the packaged platform-tools"
+                    deviceLine != null ->
+                        "Fastboot device connected · ${deviceLine.substringBefore(' ')}"
+                    else -> "No Fastboot device detected"
+                }
+                _isExecuting.value = false
+                _currentCommand.value = null
+            }
         }
     }
 
     fun runAdbService(action: String) {
         when (action) {
-            "devices" -> executeCommand("adb devices -l")
+            "connect" -> runAdbDeviceStatus()
+            "devices" -> runAdbDeviceStatus()
             "get_state" -> executeCommand("adb get-state")
             "restart_server" -> executeCommand("adb kill-server; adb start-server; adb devices -l")
+            "device_info" -> runAdbDeviceInfoScript()
             "tcpip" -> executeCommand("adb tcpip 5555")
-            "device_props" -> executeCommand("adb shell getprop ro.product.model; adb shell getprop ro.build.version.release; adb shell getprop ro.product.manufacturer")
+            "device_props" -> executeCommand("adb shell getprop ro.product.model; adb shell getprop ro.build.version.release; adb shell getprop ro.product.manufacturer; adb shell getprop ro.product.device; adb shell getprop ro.build.version.sdk; adb shell getprop ro.build.version.security_patch")
             "battery" -> executeCommand("adb shell dumpsys battery")
             "cpuinfo" -> executeCommand("adb shell cat /proc/cpuinfo | head -n 25")
-            "screen_size" -> executeCommand("adb shell wm size")
+            "screen_size" -> executeCommand("adb shell wm size; adb shell wm density")
+            "usb_state" -> executeCommand("adb shell getprop sys.usb.state; adb shell getprop sys.usb.config")
+            "list_user_packages" -> executeCommand("adb shell pm list packages -3")
+            "dump_logcat" -> executeCommand("adb logcat -d -t 150")
             "bypass_setup_wizard" -> executeCommand("adb shell content insert --uri content://settings/secure --bind name:s:user_setup_complete --bind value:s:1")
             "bypass_frp_login" -> executeCommand("adb shell am start -n com.google.android.gsf.login/com.google.android.gsf.login.LoginActivity")
             "clear_play_services" -> executeCommand("adb shell pm clear com.google.android.gms")
@@ -731,6 +873,74 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
             "list_disabled_packages" -> executeCommand("adb shell pm list packages -d")
             "list_all_packages" -> executeCommand("adb shell pm list packages")
             "dump_logcat" -> executeCommand("adb shell logcat -d -t 100")
+        }
+    }
+
+    private fun runAdbDeviceStatus() {
+        if (_isExecuting.value) return
+        val command = "adb devices -l"
+        appendLog("unitool:$ $command", LogLineType.INPUT)
+        _adbConnectionStatus.value = "Checking ADB transport…"
+        _isExecuting.value = true
+        _currentCommand.value = command
+
+        val captured = StringBuilder()
+        val captureOutput = object : TerminalOutput {
+            override fun print(text: String?) {
+                text?.let { captured.append(it); outputListener.print(it) }
+            }
+            override fun println(text: String?) {
+                text?.let { captured.append(it).append('\n'); outputListener.println(it) }
+            }
+            override fun println() {
+                captured.append('\n')
+                outputListener.println()
+            }
+            override fun error(text: String?) {
+                text?.let { outputListener.error(it) }
+            }
+            override fun clear() = outputListener.clear()
+        }
+
+        terminalSession.execute(command, captureOutput) {
+            mainHandler.post {
+                val transports = captured.toString().lineSequence()
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && !it.startsWith("List of devices attached") }
+                    .mapNotNull { line ->
+                        val columns = line.split(Regex("\\s+"))
+                        if (columns.size < 2) null else columns[1].lowercase()
+                    }
+                    .toList()
+                val outputText = captured.toString()
+                _adbConnectionStatus.value = when {
+                    "device" in transports -> "Authorized ADB device connected"
+                    "unauthorized" in transports -> "Device unauthorized — approve the USB debugging prompt"
+                    "offline" in transports -> "ADB device offline"
+                    outputText.contains("no permissions", ignoreCase = true) ->
+                        "USB permission unavailable"
+                    outputText.contains("adb: error", ignoreCase = true) ||
+                        outputText.contains("command not found", ignoreCase = true) ->
+                        "ADB command failed — check the packaged platform-tools"
+                    else -> "No ADB device detected"
+                }
+                _isExecuting.value = false
+                _currentCommand.value = null
+            }
+        }
+    }
+
+    private fun runAdbDeviceInfoScript() {
+        val app = getApplication<Application>()
+        val script = File(app.filesDir, "scripts/adb-device-info.sh")
+        try {
+            script.parentFile?.mkdirs()
+            app.assets.open("scripts/adb-device-info.sh").use { input ->
+                script.outputStream().use { output -> input.copyTo(output) }
+            }
+            executeCommand("bash ${shellQuote(script.absolutePath)}")
+        } catch (e: Exception) {
+            appendLog("[ADB] Unable to prepare device-info script: ${e.message}", LogLineType.ERROR)
         }
     }
 
@@ -815,9 +1025,4 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         appendLog("[SUCCESS] Device Info Parsed -> Manufacturer: $manufacturer | Model: $model | Android: $androidVersion", LogLineType.SYSTEM)
     }
 
-    override fun onCleared() {
-
-        super.onCleared()
-        terminalSession.close()
-    }
 }

@@ -174,7 +174,20 @@ class UsbDeviceManager(
     fun rescan() {
         if (closed) return
         val connectedDevices = getDevices()
-        Log.i(TAG, "USB scan found ${connectedDevices.size} device(s)")
+        val currentNames = connectedDevices.mapTo(mutableSetOf()) { it.deviceName }
+
+        // A detach broadcast can be missed during rapid USB mode changes. Never
+        // leave a descriptor for a device that is no longer in UsbManager's list:
+        // a later re-enumeration may reuse its device name.
+        sessions.keys.toList().filter { it !in currentNames }.forEach { staleName ->
+            Log.w(TAG, "USB rescan found stale authorized session; closing $staleName")
+            closeSession(staleName)
+        }
+        pendingPermissionRequests.toList().filter { it !in currentNames }.forEach { staleName ->
+            pendingPermissionRequests.remove(staleName)
+        }
+
+        Log.i(TAG, "USB scan found ${connectedDevices.size} device(s); active sessions=${sessions.size}")
         connectedDevices.forEach { info ->
             Log.i(
                 TAG,
@@ -313,7 +326,9 @@ class UsbDeviceManager(
 
     @Synchronized
     fun closeSession(deviceName: String) {
-        sessions.remove(deviceName)?.close()
+        val session = sessions.remove(deviceName) ?: return
+        Log.i(TAG, "Closing authorized USB session: $deviceName")
+        session.close()
     }
 
     private fun findDevice(deviceName: String): UsbDevice? =

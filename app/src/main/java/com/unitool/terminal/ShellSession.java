@@ -49,19 +49,42 @@ public class ShellSession {
             throw new IOException("bash is not installed");
         }
 
-        Map<String, String> env = ToolEnv.environment(context, workingDir);
+        // The PTY launcher may start the child in "/" even when a working
+        // directory was supplied. Resolve a readable app-private directory and
+        // explicitly cd to HOME from Bash's interactive rc file as a second guard.
+        File home = ToolEnv.home(context);
+        File initialDir = workingDir;
+        if (initialDir == null || !initialDir.isDirectory() || !initialDir.canRead()) {
+            initialDir = home;
+        }
+
+        Map<String, String> env = ToolEnv.environment(context, initialDir);
+        env.put("HOME", home.getAbsolutePath());
         // the terminal of the app shows the prompt, the shell must not print one
         env.put("PS1", "");
         env.put("PS2", "");
         // the shell reports the working directory after every command
         env.put("PROMPT_COMMAND", "printf '" + CWD_MARKER + "%s\\n' \"$PWD\"");
 
+        // Use a private rc file instead of --norc. The explicit cd is needed on
+        // Android PTYs where the requested child cwd can be ignored by the launcher.
+        File rcFile = new File(context.getFilesDir(), "unitool-bashrc");
+        String rcContents = "# UniTool interactive shell initialization\n"
+                + "if [ -n \"${HOME:-}\" ] && [ -d \"$HOME\" ]; then\n"
+                + "    cd -- \"$HOME\" || :\n"
+                + "fi\n";
+        try (java.io.FileOutputStream stream = new java.io.FileOutputStream(rcFile, false)) {
+            stream.write(rcContents.getBytes(StandardCharsets.UTF_8));
+            stream.flush();
+        }
+
         // without the line editing of readline the terminal echoes the input, so the
-        // command is shown exactly once
-        List<String> argv = Arrays.asList("bash", "--noprofile", "--norc", "+o", "emacs");
+        // command is shown exactly once. Force interactive mode so --rcfile is loaded.
+        List<String> argv = Arrays.asList("bash", "--noprofile", "--rcfile",
+                rcFile.getAbsolutePath(), "-i", "+o", "emacs");
         int[] processId = new int[1];
         int fd = com.termux.terminal.JNI.createSubprocess(bash.getAbsolutePath(),
-                workingDir == null ? "/" : workingDir.getAbsolutePath(),
+                initialDir.getAbsolutePath(),
                 argv.toArray(new String[0]), ToolEnv.toArray(env), processId, 40, 60);
         if (fd < 0) {
             throw new IOException("the terminal cannot be opened: " + fd);

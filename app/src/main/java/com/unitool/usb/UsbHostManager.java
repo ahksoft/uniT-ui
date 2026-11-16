@@ -168,9 +168,18 @@ public class UsbHostManager {
     public void requestPermission(UsbDevice device, UsbPermissionCallback callback) {
         if (usbManager == null) return;
         this.permissionCallback = callback;
-        Intent intent = new Intent(ACTION_USB_PERMISSION);
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
-        permissionIntent = PendingIntent.getBroadcast(context, 0, intent, flags);
+        Intent intent = new Intent(ACTION_USB_PERMISSION).setPackage(context.getPackageName());
+        // UsbManager adds EXTRA_DEVICE and EXTRA_PERMISSION_GRANTED to this
+        // PendingIntent, so it must be mutable on Android 12+.
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            flags |= PendingIntent.FLAG_MUTABLE;
+        } else {
+            flags |= PendingIntent.FLAG_IMMUTABLE;
+        }
+        permissionIntent = PendingIntent.getBroadcast(
+                context, device.getDeviceId(), intent, flags
+        );
         try {
             usbManager.requestPermission(device, permissionIntent);
         } catch (Exception e) {
@@ -310,7 +319,10 @@ public class UsbHostManager {
     }
 
     public void closeDevice(UsbDevice device) {
-        String key = device.getDeviceName();
+        if (device != null) closeDeviceByName(device.getDeviceName());
+    }
+
+    private void closeDeviceByName(String key) {
         UsbDeviceConnection conn = openConnections.remove(key);
         UsbInterface claimed = claimedInterfaces.remove(key);
         if (conn != null) {
@@ -320,6 +332,7 @@ public class UsbHostManager {
                 } catch (Exception ignored) {}
             }
             conn.close();
+            Log.i(TAG, "Closed stale USB connection: " + key);
         }
     }
 
@@ -359,8 +372,14 @@ public class UsbHostManager {
                 connectedDevices.put(key, new UsbDeviceInfo(device));
             }
         }
-        // Remove stale devices
-        connectedDevices.keySet().removeIf(key -> !current.containsKey(key));
+        // Remove stale devices and release their descriptors even if Android's
+        // detach broadcast was missed during a rapid USB mode transition.
+        for (String key : new ArrayList<>(connectedDevices.keySet())) {
+            if (!current.containsKey(key)) {
+                closeDeviceByName(key);
+                connectedDevices.remove(key);
+            }
+        }
     }
 
     public void onDeviceAttached(UsbDevice device) {
