@@ -484,10 +484,16 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
 
     fun readPartitions() {
         _isLoadingPartitions.value = true
-        val cmd = if (_mtkEngineVersion.value == MtkEngineVersion.MTK_V1_MTKCLIENT) {
-            "mtkclient printgpt${mtkAuthOption()}"
-        } else {
-            "mtk partitions${mtkDeviceOptions()}"
+        val cmd = when (_protocolMode.value) {
+            DeviceProtocolMode.ADB ->
+                "adb shell ls -l /dev/block/by-name /dev/block/bootdevice/by-name 2>/dev/null"
+            DeviceProtocolMode.FASTBOOT ->
+                "fastboot getvar all"
+            else -> if (_mtkEngineVersion.value == MtkEngineVersion.MTK_V1_MTKCLIENT) {
+                "mtkclient printgpt${mtkAuthOption()}"
+            } else {
+                "mtk partitions${mtkDeviceOptions()}"
+            }
         }
         appendLog("Reading GPT partition table via ${_mtkEngineVersion.value.title}: $cmd", LogLineType.INPUT)
         _isExecuting.value = true
@@ -534,8 +540,39 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
         val lines = output.lines()
         val pPattern = Pattern.compile("(?i)(?:partition|name):?\\s*([a-zA-Z0-9_\\-]+).*?(?:size:?\\s*(0x[0-9a-fA-F]+|[0-9]+[KMG]?B?))?")
         val tablePattern = Pattern.compile("^\\s*(\\d+)\\s+([a-zA-Z0-9_\\-]+)\\s+(0x[0-9a-fA-F]+|[0-9]+)\\s+(0x[0-9a-fA-F]+|[0-9]+)")
+        val fastbootSizePattern = Pattern.compile("(?i)partition-size:([^:]+):\\s*(0x[0-9a-f]+|[0-9]+)")
+        val fastbootTypePattern = Pattern.compile("(?i)partition-type:([^:]+):\\s*(\\S+)")
 
         for (line in lines) {
+            val fbSize = fastbootSizePattern.matcher(line)
+            if (fbSize.find()) {
+                val name = fbSize.group(1)?.trim().orEmpty()
+                val size = fbSize.group(2)?.trim().orEmpty()
+                if (name.isNotEmpty()) {
+                    list.add(PartitionInfo(name, size, formatBytes(size), flags = "Fastboot"))
+                }
+                continue
+            }
+            val fbType = fastbootTypePattern.matcher(line)
+            if (fbType.find()) {
+                val name = fbType.group(1)?.trim().orEmpty()
+                val type = fbType.group(2)?.trim().orEmpty()
+                if (name.isNotEmpty()) {
+                    val existing = list.indexOfFirst { it.name.equals(name, ignoreCase = true) }
+                    if (existing >= 0) list[existing] = list[existing].copy(flags = type)
+                    else list.add(PartitionInfo(name, flags = type))
+                }
+                continue
+            }
+            val arrow = line.indexOf(" -> ")
+            if (arrow > 0 && line.trimStart().startsWith("l")) {
+                val name = line.substring(0, arrow).trim().substringAfterLast(' ')
+                val target = line.substring(arrow + 4).trim()
+                if (name.matches(Regex("[A-Za-z0-9_.-]+"))) {
+                    list.add(PartitionInfo(name = name, offsetHex = target, flags = "ADB by-name link"))
+                }
+                continue
+            }
             val tMatcher = tablePattern.matcher(line.trim())
             if (tMatcher.find()) {
                 val name = tMatcher.group(2) ?: ""
