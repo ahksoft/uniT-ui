@@ -554,29 +554,15 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
             }
         }
 
+        _partitions.value = list.distinctBy { it.name.lowercase() }
         if (list.isEmpty()) {
-            val common = listOf(
-                PartitionInfo("boot", "0x04000000", "64 MB"),
-                PartitionInfo("init_boot", "0x00800000", "8 MB"),
-                PartitionInfo("dtbo", "0x00800000", "8 MB"),
-                PartitionInfo("vbmeta", "0x00800000", "8 MB"),
-                PartitionInfo("vbmeta_system", "0x00400000", "4 MB"),
-                PartitionInfo("super", "0x200000000", "8 GB"),
-                PartitionInfo("userdata", "0x800000000", "32 GB"),
-                PartitionInfo("recovery", "0x04000000", "64 MB"),
-                PartitionInfo("misc", "0x00100000", "1 MB"),
-                PartitionInfo("metadata", "0x01000000", "16 MB"),
-                PartitionInfo("nvram", "0x00500000", "5 MB"),
-                PartitionInfo("nvdata", "0x02000000", "32 MB"),
-                PartitionInfo("proinfo", "0x00300000", "3 MB"),
-                PartitionInfo("seccfg", "0x00800000", "8 MB"),
-                PartitionInfo("preloader", "0x00040000", "256 KB")
+            appendLog(
+                "[WARN] No partition entries were parsed from the device response. " +
+                    "No example or guessed partition sizes have been added.",
+                LogLineType.SYSTEM
             )
-            _partitions.value = common
-            appendLog("[INFO] Loaded ${common.size} standard device partitions.", LogLineType.SYSTEM)
         } else {
-            _partitions.value = list
-            appendLog("[SUCCESS] Parsed ${list.size} partitions from GPT.", LogLineType.SYSTEM)
+            appendLog("[SUCCESS] Parsed ${_partitions.value.size} partitions from device output.", LogLineType.SYSTEM)
         }
     }
 
