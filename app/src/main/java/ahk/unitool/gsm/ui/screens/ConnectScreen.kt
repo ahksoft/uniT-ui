@@ -1,6 +1,7 @@
 package ahk.unitool.gsm.ui.screens
 
 import android.net.Uri
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -88,6 +89,7 @@ fun ConnectScreen(
     viewModel: UniToolViewModel,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val protocolMode by viewModel.protocolMode.collectAsState()
     val mtkEngineVersion by viewModel.mtkEngineVersion.collectAsState()
     val connectedDevices by viewModel.connectedDevices.collectAsState()
@@ -117,6 +119,8 @@ fun ConnectScreen(
     val qcStorage by viewModel.qcStorage.collectAsState()
 
     var storageMenuExpanded by remember { mutableStateOf(false) }
+    var adbRemotePath by remember { mutableStateOf("/sdcard/Download") }
+    var adbLocalFilePath by remember { mutableStateOf("") }
 
     // Helper launcher for picking files
     var targetFilePickerTarget by remember { mutableStateOf<String?>(null) }
@@ -135,6 +139,19 @@ fun ConnectScreen(
                 "qc_auth" -> viewModel.setQcAuth(fileName)
                 "qc_cert" -> viewModel.setQcCert(fileName)
                 "qc_digest" -> viewModel.setQcDigest(fileName)
+                "adb_push" -> {
+                    val safeName = fileName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+                    val transferDir = File(context.cacheDir, "adb-transfer").apply { mkdirs() }
+                    val localFile = File(transferDir, safeName)
+                    try {
+                        context.contentResolver.openInputStream(it)?.use { input ->
+                            localFile.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        adbLocalFilePath = localFile.absolutePath
+                    } catch (error: Exception) {
+                        viewModel.executeCommand("echo " + viewModel.shellQuote("Unable to import selected file: " + (error.message ?: "unknown error")))
+                    }
+                }
             }
         }
     }
@@ -881,6 +898,91 @@ fun ConnectScreen(
                         ) {
                             Text(label, fontSize = 12.sp)
                         }
+                    }
+                }
+
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth().testTag("adb_file_manager"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.elevatedCardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("ADB FILE MANAGER", fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary)
+                        }
+                        Text(
+                            "Browse and transfer files on an authorized ADB device. Directory output appears in the shared terminal log.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = adbRemotePath,
+                            onValueChange = { adbRemotePath = it },
+                            label = { Text("Remote device path") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("adb_remote_path")
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    viewModel.executeCommand(
+                                        "adb shell ls -la " + viewModel.shellQuote(adbRemotePath)
+                                    )
+                                },
+                                enabled = !isExecuting && adbRemotePath.isNotBlank(),
+                                modifier = Modifier.weight(1f)
+                            ) { Text("LIST") }
+                            OutlinedButton(
+                                onClick = {
+                                    val destination = File(context.filesDir, "adb-downloads").apply { mkdirs() }
+                                    viewModel.executeCommand(
+                                        "adb pull " + viewModel.shellQuote(adbRemotePath) + " " +
+                                            viewModel.shellQuote(destination.absolutePath)
+                                    )
+                                },
+                                enabled = !isExecuting && adbRemotePath.isNotBlank(),
+                                modifier = Modifier.weight(1f)
+                            ) { Text("PULL TO APP") }
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                targetFilePickerTarget = "adb_push"
+                                filePickerLauncher.launch(arrayOf("*/*"))
+                            },
+                            enabled = !isExecuting,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.FileOpen, contentDescription = null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(if (adbLocalFilePath.isBlank()) "SELECT LOCAL FILE" else "CHANGE LOCAL FILE")
+                        }
+                        if (adbLocalFilePath.isNotBlank()) {
+                            Text(
+                                text = adbLocalFilePath,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                viewModel.executeCommand(
+                                    "adb push " + viewModel.shellQuote(adbLocalFilePath) + " " +
+                                        viewModel.shellQuote(adbRemotePath)
+                                )
+                            },
+                            enabled = !isExecuting && adbLocalFilePath.isNotBlank() && adbRemotePath.isNotBlank(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("PUSH TO DEVICE") }
                     }
                 }
             }
