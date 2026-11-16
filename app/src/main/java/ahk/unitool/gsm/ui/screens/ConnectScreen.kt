@@ -1,6 +1,7 @@
 package ahk.unitool.gsm.ui.screens
 
 import android.net.Uri
+import android.provider.OpenableColumns
 import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -127,8 +128,17 @@ fun ConnectScreen(
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
-        uri?.let {
-            val fileName = it.lastPathSegment?.substringAfterLast('/') ?: it.toString()
+        uri?.let { selectedUri ->
+            val displayName = context.contentResolver.query(
+                selectedUri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+            val fileName = displayName ?: selectedUri.lastPathSegment?.substringAfterLast('/') ?: "adb-upload"
             when (targetFilePickerTarget) {
                 "mtk_da" -> viewModel.setMtkLoader(fileName)
                 "mtk_auth" -> viewModel.setMtkAuth(fileName)
@@ -144,7 +154,9 @@ fun ConnectScreen(
                     val transferDir = File(context.cacheDir, "adb-transfer").apply { mkdirs() }
                     val localFile = File(transferDir, safeName)
                     try {
-                        context.contentResolver.openInputStream(it)?.use { input ->
+                        val inputStream = context.contentResolver.openInputStream(selectedUri)
+                            ?: throw IllegalStateException("Selected file could not be opened")
+                        inputStream.use { input ->
                             localFile.outputStream().use { output -> input.copyTo(output) }
                         }
                         adbLocalFilePath = localFile.absolutePath
