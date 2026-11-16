@@ -495,7 +495,12 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
                 "mtk partitions${mtkDeviceOptions()}"
             }
         }
-        appendLog("Reading GPT partition table via ${_mtkEngineVersion.value.title}: $cmd", LogLineType.INPUT)
+        val sourceLabel = when (_protocolMode.value) {
+            DeviceProtocolMode.ADB -> "ADB by-name metadata"
+            DeviceProtocolMode.FASTBOOT -> "Fastboot partition variables"
+            else -> "MTK GPT via ${_mtkEngineVersion.value.title}"
+        }
+        appendLog("Reading $sourceLabel: $cmd", LogLineType.INPUT)
         _isExecuting.value = true
         _currentCommand.value = cmd
 
