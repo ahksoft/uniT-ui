@@ -76,7 +76,7 @@ data class SuperImageMetadata(
                             name = requiredName(item.optString("name"), "partitions[$i].name"),
                             imagePath = path,
                             sizeBytes = optionalPositiveLong(item.optString("size"), "partitions[$i].size"),
-                            groupName = requiredName(item.optString("group_name"), "partitions[$i].group_name")
+                            groupName = item.optString("group_name").trim()
                         )
                     )
                 }
@@ -85,7 +85,7 @@ data class SuperImageMetadata(
             require(groups.isNotEmpty()) { "No groups found" }
             require(partitions.isNotEmpty()) { "No partitions found" }
             val groupNames = groups.map { it.name }.toSet()
-            partitions.forEach {
+            partitions.filter { it.groupName.isNotEmpty() }.forEach {
                 require(it.groupName in groupNames) {
                     "Partition ${it.name} references unknown group ${it.groupName}"
                 }
