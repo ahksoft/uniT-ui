@@ -101,6 +101,10 @@ data class SuperImageMetadata(
             return clean
         }
 
+        private fun positiveLong(value: String, field: String): Long =
+            optionalPositiveLong(value, field)
+                ?: throw IllegalArgumentException("Missing numeric value for $field")
+
         private fun optionalPositiveLong(value: String, field: String): Long? {
             if (value.isBlank() || value == "null") return null
             val parsed = value.trim().toLongOrNull()
