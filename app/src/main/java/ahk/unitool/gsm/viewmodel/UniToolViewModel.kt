@@ -18,6 +18,7 @@ import ahk.unitool.gsm.model.LogLineType
 import ahk.unitool.gsm.model.MtkEngineVersion
 import ahk.unitool.gsm.model.PartitionInfo
 import ahk.unitool.gsm.model.TerminalLine
+import ahk.unitool.gsm.model.SuperImageMetadata
 import com.unitool.UniToolApp
 import com.unitool.terminal.TerminalOutput
 import com.unitool.terminal.TerminalSession
@@ -142,6 +143,12 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
 
     private val _isLoadingPartitions = MutableStateFlow(false)
     val isLoadingPartitions: StateFlow<Boolean> = _isLoadingPartitions.asStateFlow()
+
+    private val _superMetadata = MutableStateFlow<SuperImageMetadata?>(null)
+    val superMetadata: StateFlow<SuperImageMetadata?> = _superMetadata.asStateFlow()
+
+    private val _superMetadataError = MutableStateFlow<String?>(null)
+    val superMetadataError: StateFlow<String?> = _superMetadataError.asStateFlow()
 
     // Flashing Progress
     private val _flashProgress = MutableStateFlow(0f)
@@ -334,10 +341,10 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
 
     /** Quotes one command line argument when it contains whitespace or quotes. */
     fun shellQuote(value: String): String {
-        val text = value.trim()
-        if (text.isEmpty()) return text
-        if (text.none { it.isWhitespace() || it == '"' || it == '\'' }) return text
-        return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        // POSIX single-quote escaping protects spaces, $, backticks, semicolons
+        // and embedded quotes when a path is passed through the shared shell.
+        if (value.isEmpty()) return "''"
+        return "'" + value.replace("'", "'\\''") + "'"
     }
 
     /** {@code --da <absolute path>} for the native MediaTek engine. */
@@ -480,6 +487,69 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
     fun bootDiag() {
         appendLog("[SPD] Booting device into DIAG mode...", LogLineType.SYSTEM)
         executeCommand("echo '[SPD] Initiating Boot DIAG sequence...'; usb")
+    }
+
+    /**
+     * Read-only ADB pull/push. Both commands run through the same terminal
+     * session as typed CLI commands; no separate process or USB owner is created.
+     */
+    fun adbPull(remotePath: String, localPath: String) {
+        val remote = remotePath.trim()
+        val local = localPath.trim()
+        if (remote.isEmpty() || local.isEmpty()) {
+            appendLog("[ADB] Enter both remote and local paths.", LogLineType.ERROR)
+            return
+        }
+        val target = File(local).absoluteFile
+        val parent = target.parentFile
+        if (parent == null || (!parent.exists() && !parent.mkdirs()) || !parent.isDirectory) {
+            appendLog("[ADB] Local destination directory is unavailable.", LogLineType.ERROR)
+            return
+        }
+        executeCommand("adb pull ${shellQuote(remote)} ${shellQuote(target.absolutePath)}")
+    }
+
+    fun adbPush(localPath: String, remotePath: String) {
+        val local = localPath.trim()
+        val remote = remotePath.trim()
+        if (local.isEmpty() || remote.isEmpty()) {
+            appendLog("[ADB] Enter both local and remote paths.", LogLineType.ERROR)
+            return
+        }
+        val source = File(local).absoluteFile
+        if (!source.isFile || !source.canRead()) {
+            appendLog("[ADB] Local source file does not exist or cannot be read.", LogLineType.ERROR)
+            return
+        }
+        executeCommand("adb push ${shellQuote(source.absolutePath)} ${shellQuote(remote)}")
+    }
+
+    /** Parse a selected super_def JSON file for display only; never builds or runs lpmake. */
+    fun inspectSuperMetadata(path: String) {
+        val selected = path.trim()
+        if (selected.isEmpty()) {
+            _superMetadataError.value = "Enter the path to a super_def JSON file."
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(selected)
+                require(file.isFile && file.canRead()) { "File does not exist or is not readable." }
+                require(file.length() <= 2L * 1024L * 1024L) { "Metadata file exceeds 2 MiB." }
+                val parsed = SuperImageMetadata.parse(file.readText(Charsets.UTF_8))
+                mainHandler.post {
+                    _superMetadata.value = parsed
+                    _superMetadataError.value = null
+                    appendLog("[SUPER] Parsed metadata: ${parsed.blockDevices.size} block device(s), ${parsed.groups.size} group(s), ${parsed.partitions.size} partition(s).", LogLineType.SYSTEM)
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    _superMetadata.value = null
+                    _superMetadataError.value = e.message ?: "Unable to parse super metadata."
+                    appendLog("[SUPER] Metadata preview failed: ${e.message}", LogLineType.ERROR)
+                }
+            }
+        }
     }
 
     fun readPartitions() {
