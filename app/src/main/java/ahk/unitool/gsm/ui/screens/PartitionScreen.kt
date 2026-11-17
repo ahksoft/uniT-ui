@@ -51,6 +51,9 @@ fun PartitionScreen(
     val isLoading by viewModel.isLoadingPartitions.collectAsState()
     val isExecuting by viewModel.isExecuting.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
+    var superDefinitionPath by remember { mutableStateOf("") }
+    val superMetadata by viewModel.superMetadata.collectAsState()
+    val superMetadataError by viewModel.superMetadataError.collectAsState()
 
     val filteredPartitions = remember(partitions, searchQuery) {
         if (searchQuery.isBlank()) partitions
@@ -80,6 +83,69 @@ fun PartitionScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer
+            )
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("SUPER IMAGE METADATA PREVIEW", fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary)
+                Text(
+                    "Parse super_def JSON into block devices, groups and partitions. This is a read-only preview; it does not build or flash an image.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = superDefinitionPath,
+                    onValueChange = { superDefinitionPath = it },
+                    label = { Text("Path to super_def JSON") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+                Button(
+                    onClick = { viewModel.inspectSuperMetadata(superDefinitionPath) },
+                    enabled = !isExecuting,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("INSPECT METADATA") }
+                superMetadataError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                superMetadata?.let { metadata ->
+                    Text("Metadata size: ${metadata.metadataSize} bytes",
+                        style = MaterialTheme.typography.bodySmall)
+                    Text("Block devices (${metadata.blockDevices.size})",
+                        fontWeight = FontWeight.SemiBold)
+                    metadata.blockDevices.forEach { device ->
+                        Text("${device.name} · ${device.sizeBytes} B · block ${device.blockSize} · alignment ${device.alignment}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace)
+                    }
+                    Text("Groups (${metadata.groups.size})", fontWeight = FontWeight.SemiBold)
+                    metadata.groups.forEach { group ->
+                        Text("${group.name} · max ${group.maximumSizeBytes} B",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    Text("Partitions (${metadata.partitions.size})",
+                        fontWeight = FontWeight.SemiBold)
+                    metadata.partitions.forEach { partition ->
+                        Text(
+                            "${partition.name} · ${partition.sizeBytes} B · group ${partition.groupName}" +
+                                (partition.imagePath?.let { " · image $it" } ?: ""),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
             }
         }
 

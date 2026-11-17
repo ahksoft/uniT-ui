@@ -61,6 +61,8 @@ fun ToolsScreen(
     val isExecuting by viewModel.isExecuting.collectAsState()
 
     var adbCommand by remember { mutableStateOf("adb devices -l") }
+    var adbRemotePath by remember { mutableStateOf("/sdcard/Download/") }
+    var adbLocalPath by remember { mutableStateOf("/sdcard/Download/") }
     var fastbootCommand by remember { mutableStateOf("fastboot devices -l") }
     var heimdallCommand by remember { mutableStateOf("heimdall detect") }
 
@@ -151,6 +153,42 @@ fun ToolsScreen(
                     enabled = !isExecuting,
                     modifier = Modifier.weight(1f)
                 ) { Text("EDL") }
+            }
+        }
+
+        ToolSectionCard(
+            title = "ADB FILE TRANSFER",
+            description = "Transfer ordinary files to or from an ADB-authorized device. Paths are passed as individually quoted shell arguments through the shared terminal.",
+            icon = Icons.Default.Storage
+        ) {
+            OutlinedTextField(
+                value = adbRemotePath,
+                onValueChange = { adbRemotePath = it },
+                label = { Text("Device path") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = adbLocalPath,
+                onValueChange = { adbLocalPath = it },
+                label = { Text("Local path (app-accessible)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { viewModel.adbPull(adbRemotePath, adbLocalPath) },
+                    enabled = !isExecuting,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Pull from device") }
+                OutlinedButton(
+                    onClick = { viewModel.adbPush(adbLocalPath, adbRemotePath) },
+                    enabled = !isExecuting,
+                    modifier = Modifier.weight(1f)
+                ) { Text("Push to device") }
             }
         }
 
