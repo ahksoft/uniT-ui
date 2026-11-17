@@ -14,17 +14,17 @@ data class SuperImageMetadata(
 ) {
     data class BlockDevice(
         val name: String,
-        val sizeBytes: Long,
+        val sizeBytes: Long?,
         val blockSize: Long,
         val alignment: Long
     )
 
-    data class Group(val name: String, val maximumSizeBytes: Long)
+    data class Group(val name: String, val maximumSizeBytes: Long?)
 
     data class Partition(
         val name: String,
         val imagePath: String?,
-        val sizeBytes: Long,
+        val sizeBytes: Long?,
         val groupName: String
     )
 
@@ -45,7 +45,7 @@ data class SuperImageMetadata(
                     add(
                         BlockDevice(
                             name = requiredName(item.optString("name"), "block_devices[$i].name"),
-                            sizeBytes = positiveLong(item.optString("size"), "block_devices[$i].size"),
+                            sizeBytes = optionalPositiveLong(item.optString("size"), "block_devices[$i].size"),
                             blockSize = positiveLong(item.optString("block_size", "4096"), "block_devices[$i].block_size"),
                             alignment = positiveLong(item.optString("alignment", "1048576"), "block_devices[$i].alignment")
                         )
@@ -60,7 +60,7 @@ data class SuperImageMetadata(
                     add(
                         Group(
                             name = requiredName(item.optString("name"), "groups[$i].name"),
-                            maximumSizeBytes = positiveLong(item.optString("maximum_size"), "groups[$i].maximum_size")
+                            maximumSizeBytes = optionalPositiveLong(item.optString("maximum_size"), "groups[$i].maximum_size")
                         )
                     )
                 }
@@ -75,7 +75,7 @@ data class SuperImageMetadata(
                         Partition(
                             name = requiredName(item.optString("name"), "partitions[$i].name"),
                             imagePath = path,
-                            sizeBytes = positiveLong(item.optString("size"), "partitions[$i].size"),
+                            sizeBytes = optionalPositiveLong(item.optString("size"), "partitions[$i].size"),
                             groupName = requiredName(item.optString("group_name"), "partitions[$i].group_name")
                         )
                     )
@@ -101,7 +101,8 @@ data class SuperImageMetadata(
             return clean
         }
 
-        private fun positiveLong(value: String, field: String): Long {
+        private fun optionalPositiveLong(value: String, field: String): Long? {
+            if (value.isBlank() || value == "null") return null
             val parsed = value.trim().toLongOrNull()
                 ?: throw IllegalArgumentException("Invalid numeric value for $field")
             require(parsed > 0) { "$field must be greater than zero" }
