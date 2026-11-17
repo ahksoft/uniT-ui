@@ -501,8 +501,9 @@ class UniToolViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         val target = File(local).absoluteFile
-        val parent = target.parentFile
-        if (parent == null || (!parent.exists() && !parent.mkdirs()) || !parent.isDirectory) {
+        val wantsDirectory = local.endsWith(File.separator) || target.isDirectory
+        val directory = if (wantsDirectory) target else target.parentFile
+        if (directory == null || (!directory.exists() && !directory.mkdirs()) || !directory.isDirectory) {
             appendLog("[ADB] Local destination directory is unavailable.", LogLineType.ERROR)
             return
         }
